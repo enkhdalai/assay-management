@@ -2,6 +2,10 @@
   "name": "assay-management",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "engines": {
     "node": ">=22.13.0"
   },

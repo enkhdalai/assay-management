@@ -48,12 +48,13 @@ export default defineConfig(async () => {
       ? { watch: { useFsEvents: false, usePolling: true } }
       : undefined,
     plugins: [
-      vinext(),
+      vinext({ appDir: "apps/web" }),
       sites(),
       cloudflare({
         viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
         config: localBindingConfig,
       }),
     ],
+    publicDir: "apps/web/public",
   };
 });

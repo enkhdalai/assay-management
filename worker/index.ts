@@ -1,11 +1,9 @@
-/** Cloudflare Worker entry point for the vinext-starter template. */
-import { Hono } from "hono";
+/** Cloudflare Worker entry point for the assay management platform. */
+import { edgeApi, type EdgeApiEnv } from "../apps/edge-api/src/app";
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 
-interface Env {
-  ASSETS: Fetcher;
-  DB: D1Database;
+type Env = EdgeApiEnv & {
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -13,44 +11,12 @@ interface Env {
       };
     };
   };
-}
+};
 
 interface ExecutionContext {
   waitUntil(promise: Promise<unknown>): void;
   passThroughOnException(): void;
 }
-
-const api = new Hono<{ Bindings: Env }>().basePath("/api");
-
-api.get("/health", (c) =>
-  c.json({
-    ok: true,
-    service: "assay-management",
-    mode: "private-admin",
-  }),
-);
-
-api.get("/v1/assays", (c) =>
-  c.json({
-    data: [
-      {
-        id: "AC-260820-014",
-        customer_name: "Б. Энхбат",
-        metal: "gold",
-        gross_weight_grams: 126.45,
-        purity_percent: 89.72,
-        fine_weight_grams: 113.45,
-        status: "manager_review",
-        allocations: [
-          { bank: "Хаан банк", allocated_grams: 70 },
-          { bank: "Голомт банк", allocated_grams: 56.45 },
-        ],
-      },
-    ],
-    security_note:
-      "Production endpoints will require signed requests, scoped roles, and append-only audit logging.",
-  }),
-);
 
 // Image security config. SVG sources with .svg extension auto-skip the
 // optimization endpoint on the client side (served directly, no proxy).
@@ -63,7 +29,7 @@ const worker = {
     const url = new URL(request.url);
 
     if (url.pathname.startsWith("/api/")) {
-      return api.fetch(request, env, ctx);
+      return edgeApi.fetch(request, env);
     }
 
     if (url.pathname === "/_vinext/image") {

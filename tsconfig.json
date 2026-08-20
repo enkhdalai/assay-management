@@ -14,7 +14,11 @@
     "jsx": "react-jsx",
     "incremental": true,
     "paths": {
-      "@/*": ["./*"]
+      "@assay/db": ["./packages/db/src/index.ts"],
+      "@assay/security": ["./packages/security/src/index.ts"],
+      "@assay/shared": ["./packages/shared/src/index.ts"],
+      "@assay/web/*": ["./apps/web/*"],
+      "@/*": ["./apps/web/*"]
     }
   },
   "include": [
