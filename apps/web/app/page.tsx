@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 
+import { LogoutButton } from "./LogoutButton";
+
 export const metadata: Metadata = {
   title: "Сорьцын төвийн удирдлага",
   description:
@@ -69,6 +71,20 @@ const auditEvents = [
   "Лабораторийн эрхлэгч AC-260820-011 дүнг баталгаажуулав.",
 ];
 
+const navigationItems = [
+  { label: "Хяналтын самбар", href: "/" },
+  { label: "Сорьцын бүртгэл", href: "#" },
+  { label: "Харилцагчид", href: "#" },
+  { label: "Шинжилгээний дүн", href: "#" },
+  { label: "Банк хуваарилалт", href: "#" },
+  { label: "Монголбанк API", href: "#" },
+  { label: "Арилжааны банкууд", href: "#" },
+  { label: "Тайлан", href: "#" },
+  { label: "Аудит лог", href: "#" },
+  { label: "Хэрэглэгч урих", href: "/users/invite" },
+  { label: "Тохиргоо", href: "#" },
+];
+
 export default function Home() {
   return (
     <main className="app-shell">
@@ -82,21 +98,10 @@ export default function Home() {
         </div>
 
         <nav className="nav-list">
-          {[
-            "Хяналтын самбар",
-            "Сорьцын бүртгэл",
-            "Харилцагчид",
-            "Шинжилгээний дүн",
-            "Банк хуваарилалт",
-            "Монголбанк API",
-            "Арилжааны банкууд",
-            "Тайлан",
-            "Аудит лог",
-            "Тохиргоо",
-          ].map((item, index) => (
-            <a className={index === 0 ? "nav-item active" : "nav-item"} href="#" key={item}>
-              <span className="nav-icon">{item.slice(0, 1)}</span>
-              {item}
+          {navigationItems.map((item, index) => (
+            <a className={index === 0 ? "nav-item active" : "nav-item"} href={item.href} key={item.label}>
+              <span className="nav-icon">{item.label.slice(0, 1)}</span>
+              {item.label}
             </a>
           ))}
         </nav>
@@ -112,6 +117,7 @@ export default function Home() {
             <button aria-label="Тусламж">?</button>
             <button aria-label="Мэдэгдэл">!</button>
             <div className="user-menu">Админ хэрэглэгч</div>
+            <LogoutButton />
           </div>
         </header>
 

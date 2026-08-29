@@ -1,5 +1,9 @@
 /** Cloudflare Worker entry point for the assay management platform. */
 import { edgeApi, type EdgeApiEnv } from "../apps/edge-api/src/app";
+import {
+  getAuthenticatedUserFromRequest,
+  isPublicWebPath,
+} from "../apps/edge-api/src/auth/http";
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 
@@ -30,6 +34,18 @@ const worker = {
 
     if (url.pathname.startsWith("/api/")) {
       return edgeApi.fetch(request, env);
+    }
+
+    if (url.pathname === "/login") {
+      const user = await getAuthenticatedUserFromRequest(request, env);
+      if (user) return Response.redirect(new URL("/", request.url), 303);
+    } else if (!isPublicWebPath(url.pathname)) {
+      const user = await getAuthenticatedUserFromRequest(request, env);
+      if (!user) {
+        const loginUrl = new URL("/login", request.url);
+        loginUrl.searchParams.set("return_to", `${url.pathname}${url.search}`);
+        return Response.redirect(loginUrl, 303);
+      }
     }
 
     if (url.pathname === "/_vinext/image") {

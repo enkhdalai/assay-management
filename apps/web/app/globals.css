@@ -194,6 +194,21 @@ h2 {
   width: 44px;
 }
 
+.top-actions .logout-button {
+  border-radius: 8px;
+  color: #b91c1c;
+  font-size: 14px;
+  font-weight: 800;
+  padding: 0 14px;
+  width: auto;
+}
+
+.top-actions .logout-button:disabled,
+.login-submit:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
 .user-menu {
   align-items: center;
   display: flex;
@@ -460,6 +475,127 @@ h2 {
   padding-left: 20px;
 }
 
+.login-shell {
+  align-items: center;
+  display: grid;
+  gap: 28px;
+  grid-template-columns: minmax(360px, 520px) minmax(320px, 440px);
+  justify-content: center;
+  min-height: 100vh;
+  padding: 32px;
+}
+
+.login-card,
+.login-security-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.login-card {
+  padding: 32px;
+}
+
+.login-brand {
+  margin-bottom: 32px;
+}
+
+.login-copy {
+  margin-bottom: 24px;
+}
+
+.login-copy h1 {
+  font-size: 32px;
+  margin-bottom: 10px;
+}
+
+.login-copy p:last-child {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.login-form {
+  display: grid;
+  gap: 16px;
+}
+
+.login-form label {
+  color: #334155;
+  display: grid;
+  font-weight: 750;
+  gap: 8px;
+}
+
+.login-form input,
+.login-form select {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--foreground);
+  min-height: 48px;
+  padding: 0 14px;
+  width: 100%;
+}
+
+.login-form input:focus,
+.login-form select:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.14);
+  outline: 0;
+}
+
+.login-error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  color: #b91c1c;
+  line-height: 1.4;
+  padding: 12px;
+}
+
+.login-submit {
+  min-height: 48px;
+  width: 100%;
+}
+
+.invite-result {
+  background: #ecfdf5;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  color: #14532d;
+  display: grid;
+  gap: 6px;
+  line-height: 1.4;
+  padding: 12px;
+}
+
+.invite-result span {
+  color: #166534;
+}
+
+.invite-result code {
+  background: #ffffff;
+  border: 1px solid #bbf7d0;
+  border-radius: 6px;
+  color: #0f172a;
+  display: block;
+  font-family: var(--font-geist-mono), monospace;
+  overflow-x: auto;
+  padding: 10px;
+  white-space: nowrap;
+}
+
+.login-security-panel {
+  padding: 26px;
+}
+
+.login-security-panel h2 {
+  font-size: 24px;
+  line-height: 1.25;
+  margin-bottom: 18px;
+}
+
 @media (max-width: 1200px) {
   .app-shell {
     grid-template-columns: 220px minmax(0, 1fr);
@@ -515,7 +651,16 @@ h2 {
   .stats-grid,
   .workflow,
   .dashboard-grid,
-  .dashboard-grid.bottom {
+  .dashboard-grid.bottom,
+  .login-shell {
     grid-template-columns: 1fr;
+  }
+
+  .login-shell {
+    padding: 18px;
+  }
+
+  .login-card {
+    padding: 24px;
   }
 }
