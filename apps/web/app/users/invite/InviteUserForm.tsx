@@ -59,7 +59,7 @@ export function InviteUserForm() {
       <label>
         <span>Эрх</span>
         <select defaultValue="intake_officer" name="role" required>
-          <option value="assay_admin">Сорьцын төвийн админ</option>
+          <option value="assay_admin">Админ</option>
           <option value="intake_officer">Хүлээн авах ажилтан</option>
           <option value="chemist">Химич</option>
           <option value="lab_manager">Лабораторийн эрхлэгч</option>

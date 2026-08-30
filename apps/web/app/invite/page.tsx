@@ -21,7 +21,9 @@ export default async function InvitePage({ searchParams }: InvitePageProps) {
     <main className="login-shell">
       <section className="login-card" aria-labelledby="invite-title">
         <div className="brand-block login-brand">
-          <div className="brand-mark">AC</div>
+          <div className="brand-mark">
+            <img alt="" src="/favicon.svg" />
+          </div>
           <div>
             <strong>Сорьцын төв</strong>
             <span>Хэрэглэгчийн урилга</span>
@@ -45,7 +47,7 @@ export default async function InvitePage({ searchParams }: InvitePageProps) {
         <p className="eyebrow">Нууцлал</p>
         <h2>Энэ системд public signup байхгүй.</h2>
         <ul className="check-list">
-          <li>Зөвхөн эрхтэй админ хэрэглэгч урилга үүсгэнэ.</li>
+          <li>Зөвхөн эрхтэй супер админ эсвэл админ хэрэглэгч урилга үүсгэнэ.</li>
           <li>Урилгын token зөвхөн hash хэлбэрээр хадгалагдана.</li>
           <li>Хугацаа дууссан урилга дахин ашиглагдахгүй.</li>
         </ul>

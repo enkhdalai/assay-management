@@ -23,7 +23,7 @@ export function SetupForm() {
       const result = await response.json().catch(() => null);
 
       if (!response.ok || !result?.ok) {
-        setError(result?.message ?? "Эхний админ үүсгэх үед алдаа гарлаа.");
+        setError(result?.message ?? "Эхний супер админ үүсгэх үед алдаа гарлаа.");
         return;
       }
 
@@ -50,22 +50,31 @@ export function SetupForm() {
         <input name="organizationCode" required type="text" />
       </label>
       <label>
-        <span>Админы овог нэр</span>
+        <span>Супер админы овог нэр</span>
         <input autoComplete="name" name="fullName" required type="text" />
       </label>
       <label>
-        <span>Админы имэйл</span>
+        <span>Супер админы имэйл</span>
         <input autoComplete="email" inputMode="email" name="email" required type="email" />
       </label>
       <label>
         <span>Нууц үг</span>
-        <input autoComplete="new-password" name="password" required type="password" />
+        <input
+          autoComplete="new-password"
+          minLength={12}
+          name="password"
+          pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{12,}"
+          required
+          title="Дор хаяж 12 тэмдэгттэй, том үсэг, жижиг үсэг, тоо агуулсан байна."
+          type="password"
+        />
+        <small>Дор хаяж 12 тэмдэгттэй, том үсэг, жижиг үсэг, тоо агуулсан байна.</small>
       </label>
 
       {error ? <p className="login-error">{error}</p> : null}
 
       <button className="primary-button login-submit" disabled={isSubmitting} type="submit">
-        {isSubmitting ? "Үүсгэж байна..." : "Эхний админ үүсгэх"}
+        {isSubmitting ? "Үүсгэж байна..." : "Эхний супер админ үүсгэх"}
       </button>
     </form>
   );

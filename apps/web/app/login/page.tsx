@@ -21,7 +21,9 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
     <main className="login-shell">
       <section className="login-card" aria-labelledby="login-title">
         <div className="brand-block login-brand">
-          <div className="brand-mark">AC</div>
+          <div className="brand-mark">
+            <img alt="" src="/favicon.svg" />
+          </div>
           <div>
             <strong>Сорьцын төв</strong>
             <span>Хувийн удирдлага</span>

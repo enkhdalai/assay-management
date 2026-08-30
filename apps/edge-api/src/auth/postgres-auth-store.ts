@@ -94,81 +94,126 @@ export class PostgresAuthStore implements AuthStore {
     const fullName = input.fullName.trim();
     const organizationName = input.organizationName.trim();
     const organizationCode = input.organizationCode.trim().toUpperCase();
+    const organizationId = crypto.randomUUID();
+    const userId = crypto.randomUUID();
+    const auditCreatedAt = new Date();
+    const previousHash = await this.getLatestAuditHash();
+    const entryHash = await createAuditEntryHash(
+      {
+        actorUserId: userId,
+        actorOrganizationId: organizationId,
+        action: "first_admin.created",
+        entityType: "users",
+        entityId: userId,
+        reason: "Initial secure system bootstrap",
+      },
+      previousHash,
+      auditCreatedAt,
+    );
 
-    const result = await this.db.transaction(async (tx) => {
-      const [organization] = await tx
-        .insert(organizations)
-        .values({
-          type: "system_operator",
-          status: "active",
-          code: organizationCode,
-          name: organizationName,
-        })
-        .returning({
-          id: organizations.id,
-          name: organizations.name,
-        });
-
-      const [user] = await tx
-        .insert(users)
-        .values({
-          organizationId: organization.id,
-          role: "system_admin",
-          status: "active",
+    const result = await this.db.execute<{
+      id: string;
+      organizationId: string;
+      organizationName: string;
+      role: string;
+      email: string;
+      fullName: string;
+    }>(sql`
+      WITH created_organization AS (
+        INSERT INTO organizations (id, type, status, code, name)
+        VALUES (${organizationId}, 'system_operator', 'active', ${organizationCode}, ${organizationName})
+        RETURNING id, name
+      ),
+      created_user AS (
+        INSERT INTO users (
+          id,
+          organization_id,
+          role,
+          status,
           email,
-          fullName,
-          passwordHash,
-          passwordUpdatedAt: new Date(),
-          mfaEnabled: false,
-        })
-        .returning({
-          id: users.id,
-          organizationId: users.organizationId,
-          role: users.role,
-          email: users.email,
-          fullName: users.fullName,
-        });
+          full_name,
+          password_hash,
+          password_updated_at,
+          mfa_enabled
+        )
+        SELECT
+          ${userId},
+          id,
+          'system_admin',
+          'active',
+          ${email},
+          ${fullName},
+          ${passwordHash},
+          ${new Date()},
+          false
+        FROM created_organization
+        RETURNING id, organization_id, role, email, full_name
+      ),
+      created_session AS (
+        INSERT INTO user_sessions (user_id, status, session_token_hash, expires_at)
+        SELECT id, 'active', ${tokenHash}, ${expiresAt}
+        FROM created_user
+        RETURNING user_id
+      ),
+      created_login AS (
+        INSERT INTO login_events (user_id, email, outcome, reason)
+        SELECT id, email, 'success', 'first_admin_created'
+        FROM created_user
+        RETURNING id
+      ),
+      created_audit AS (
+        INSERT INTO audit_logs (
+          actor_user_id,
+          actor_organization_id,
+          action,
+          entity_type,
+          entity_id,
+          reason,
+          previous_hash,
+          entry_hash,
+          created_at
+        )
+        VALUES (
+          ${userId},
+          ${organizationId},
+          'first_admin.created',
+          'users',
+          ${userId},
+          'Initial secure system bootstrap',
+          ${previousHash},
+          ${entryHash},
+          ${auditCreatedAt}
+        )
+        RETURNING id
+      )
+      SELECT
+        u.id,
+        u.organization_id AS "organizationId",
+        o.name AS "organizationName",
+        u.role,
+        u.email,
+        u.full_name AS "fullName"
+      FROM created_user u
+      CROSS JOIN created_organization o
+    `);
+    const [user] = readRows(result);
 
-      await tx.insert(userSessions).values({
-        userId: user.id,
-        status: "active",
-        sessionTokenHash: tokenHash,
-        expiresAt,
-      });
-
-      await tx.insert(loginEvents).values({
-        userId: user.id,
-        email: user.email,
-        outcome: "success",
-        reason: "first_admin_created",
-      });
-
-      return {
-        user: {
-          id: user.id,
-          organizationId: user.organizationId,
-          organizationName: organization.name,
-          role: user.role,
-          email: user.email,
-          fullName: user.fullName,
-        },
-      };
-    });
-
-    await this.recordAuditEvent({
-      actorUserId: result.user.id,
-      actorOrganizationId: result.user.organizationId,
-      action: "first_admin.created",
-      entityType: "users",
-      entityId: result.user.id,
-      reason: "Initial secure system bootstrap",
-    });
+    if (!user) {
+      return { ok: false, reason: "invalid_credentials" };
+    }
 
     return {
       ok: true,
       token,
       expiresAt,
-      user: result.user,
+      user: {
+        id: user.id,
+        organizationId: user.organizationId,
+        organizationName: user.organizationName,
+        role: user.role,
+        email: user.email,
+        fullName: user.fullName,
+      },
     };
   }
 
@@ -256,75 +301,139 @@ export class PostgresAuthStore implements AuthStore {
     const expiresAt = sessionExpiresAt();
     const fullName = input.fullName.trim();
 
-    const result = await this.db.transaction(async (tx) => {
-      const [user] = await tx
-        .insert(users)
-        .values({
-          organizationId: invitation.organizationId,
-          role: invitation.role,
-          status: "active",
-          email: invitation.email,
-          fullName,
-          passwordHash,
-          passwordUpdatedAt: new Date(),
-        })
-        .returning({
-          id: users.id,
-          organizationId: users.organizationId,
-          role: users.role,
-          email: users.email,
-          fullName: users.fullName,
-        });
+    const userId = crypto.randomUUID();
+    const acceptedAt = new Date();
+    const previousHash = await this.getLatestAuditHash();
+    const entryHash = await createAuditEntryHash(
+      {
+        actorUserId: userId,
+        actorOrganizationId: invitation.organizationId,
+        action: "user_invitation.accepted",
+        entityType: "user_invitations",
+        entityId: invitation.id,
+        reason: "User accepted invitation and created password",
+      },
+      previousHash,
+      acceptedAt,
+    );
 
-      await tx
-        .update(userInvitations)
-        .set({
-          status: "accepted",
-          acceptedByUserId: user.id,
-          acceptedAt: new Date(),
-        })
-        .where(eq(userInvitations.id, invitation.id));
+    const result = await this.db.execute<{
+      id: string;
+      organizationId: string;
+      organizationName: string;
+      role: string;
+      email: string;
+      fullName: string;
+    }>(sql`
+      WITH selected_invitation AS (
+        SELECT
+          i.id,
+          i.organization_id,
+          o.name AS organization_name,
+          i.email,
+          i.role
+        FROM user_invitations i
+        INNER JOIN organizations o ON i.organization_id = o.id
+        WHERE
+          i.id = ${invitation.id}
+          AND i.status = 'pending'
+          AND i.expires_at > now()
+      ),
+      created_user AS (
+        INSERT INTO users (
+          id,
+          organization_id,
+          role,
+          status,
+          email,
+          full_name,
+          password_hash,
+          password_updated_at
+        )
+        SELECT
+          ${userId},
+          organization_id,
+          role,
+          'active',
+          email,
+          ${fullName},
+          ${passwordHash},
+          ${acceptedAt}
+        FROM selected_invitation
+        RETURNING id, organization_id, role, email, full_name
+      ),
+      updated_invitation AS (
+        UPDATE user_invitations
+        SET
+          status = 'accepted',
+          accepted_by_user_id = ${userId},
+          accepted_at = ${acceptedAt}
+        WHERE id IN (SELECT id FROM selected_invitation)
+        RETURNING id
+      ),
+      created_session AS (
+        INSERT INTO user_sessions (user_id, status, session_token_hash, expires_at)
+        SELECT id, 'active', ${sessionTokenHash}, ${expiresAt}
+        FROM created_user
+        RETURNING user_id
+      ),
+      created_login AS (
+        INSERT INTO login_events (user_id, email, outcome, reason)
+        SELECT id, email, 'success', 'invitation_accepted'
+        FROM created_user
+        RETURNING id
+      ),
+      created_audit AS (
+        INSERT INTO audit_logs (
+          actor_user_id,
+          actor_organization_id,
+          action,
+          entity_type,
+          entity_id,
+          reason,
+          previous_hash,
+          entry_hash,
+          created_at
+        )
+        VALUES (
+          ${userId},
+          ${invitation.organizationId},
+          'user_invitation.accepted',
+          'user_invitations',
+          ${invitation.id},
+          'User accepted invitation and created password',
+          ${previousHash},
+          ${entryHash},
+          ${acceptedAt}
+        )
+        RETURNING id
+      )
+      SELECT
+        u.id,
+        u.organization_id AS "organizationId",
+        si.organization_name AS "organizationName",
+        u.role,
+        u.email,
+        u.full_name AS "fullName"
+      FROM created_user u
+      CROSS JOIN selected_invitation si
+    `);
+    const [user] = readRows(result);
 
-      await tx.insert(userSessions).values({
-        userId: user.id,
-        status: "active",
-        sessionTokenHash,
-        expiresAt,
-      });
-
-      await tx.insert(loginEvents).values({
-        userId: user.id,
-        email: user.email,
-        outcome: "success",
-        reason: "invitation_accepted",
-      });
-
-      return {
-        user: {
-          id: user.id,
-          organizationId: user.organizationId,
-          organizationName: invitation.organizationName,
-          role: user.role,
-          email: user.email,
-          fullName: user.fullName,
-        },
-      };
-    });
-
-    await this.recordAuditEvent({
-      actorUserId: result.user.id,
-      actorOrganizationId: result.user.organizationId,
-      action: "user_invitation.accepted",
-      entityType: "user_invitations",
-      entityId: invitation.id,
-      reason: "User accepted invitation and created password",
-    });
+    if (!user) return { ok: false, reason: "invalid_credentials" };
 
     return {
       ok: true,
       token: sessionToken,
       expiresAt,
-      user: result.user,
+      user: {
+        id: user.id,
+        organizationId: user.organizationId,
+        organizationName: user.organizationName,
+        role: user.role,
+        email: user.email,
+        fullName: user.fullName,
+      },
     };
   }
 
@@ -389,8 +498,8 @@ export class PostgresAuthStore implements AuthStore {
     const tokenHash = await hashSessionToken(token);
     const expiresAt = sessionExpiresAt();
 
-    await this.db.transaction(async (tx) => {
-      await tx
+    await this.db.batch([
+      this.db
         .update(users)
         .set({
           failedLoginCount: 0,
@@ -399,21 +508,21 @@ export class PostgresAuthStore implements AuthStore {
           lastLoginAt: new Date(),
           updatedAt: new Date(),
         })
-        .where(eq(users.id, user.id));
+        .where(eq(users.id, user.id)),
 
-      await tx.insert(userSessions).values({
+      this.db.insert(userSessions).values({
         userId: user.id,
         status: "active",
         sessionTokenHash: tokenHash,
         expiresAt,
-      });
+      }),
 
-      await tx.insert(loginEvents).values({
+      this.db.insert(loginEvents).values({
         userId: user.id,
         email: user.email,
         outcome: "success",
-      });
-    });
+      }),
+    ]);
 
     return {
       ok: true,
@@ -546,19 +655,9 @@ export class PostgresAuthStore implements AuthStore {
     entityId?: string;
     reason?: string;
   }): Promise<void> {
-    const previous = await this.db
-      .select({ entryHash: auditLogs.entryHash })
-      .from(auditLogs)
-      .orderBy(desc(auditLogs.createdAt))
-      .limit(1);
-    const previousHash = previous[0]?.entryHash ?? null;
-    const entryHash = await sha256Base64Url(
-      JSON.stringify({
-        ...event,
-        previousHash,
-        createdAt: new Date().toISOString(),
-      }),
-    );
+    const previousHash = await this.getLatestAuditHash();
+    const createdAt = new Date();
+    const entryHash = await createAuditEntryHash(event, previousHash, createdAt);
 
     await this.db.insert(auditLogs).values({
       actorUserId: event.actorUserId,
@@ -569,7 +668,18 @@ export class PostgresAuthStore implements AuthStore {
       reason: event.reason,
       previousHash,
       entryHash,
+      createdAt,
     });
+  }
+
+  private async getLatestAuditHash(): Promise<string | null> {
+    const previous = await this.db
+      .select({ entryHash: auditLogs.entryHash })
+      .from(auditLogs)
+      .orderBy(desc(auditLogs.createdAt))
+      .limit(1);
+
+    return previous[0]?.entryHash ?? null;
   }
 }
 
@@ -617,4 +727,29 @@ function assertCanInvite(
   }
 
   throw new Error("Invitation permission denied.");
+}
+
+function readRows<T>(result: T[] | { rows: T[] }): T[] {
+  return Array.isArray(result) ? result : result.rows;
+}
+
+async function createAuditEntryHash(
+  event: {
+    actorUserId?: string;
+    actorOrganizationId?: string;
+    action: string;
+    entityType: string;
+    entityId?: string;
+    reason?: string;
+  },
+  previousHash: string | null,
+  createdAt: Date,
+): Promise<string> {
+  return sha256Base64Url(
+    JSON.stringify({
+      ...event,
+      previousHash,
+      createdAt: createdAt.toISOString(),
+    }),
+  );
 }

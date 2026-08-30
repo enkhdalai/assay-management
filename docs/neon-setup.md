@@ -20,6 +20,14 @@ npm run setup:token
 
 Save the printed `SETUP_TOKEN` privately. Put only `AUTH_SETUP_TOKEN_HASH` into `.dev.vars` or Cloudflare secrets.
 
+To avoid copy-paste mistakes in local development, rotate and write the hash to `.dev.vars` automatically:
+
+```bash
+npm run setup:rotate
+```
+
+Then restart the dev server and paste the printed `SETUP_TOKEN` into `/setup`.
+
 ## Apply migrations to Neon
 
 Load `.dev.vars` into the shell, then run the migration:
@@ -31,4 +39,4 @@ set +a
 npm run db:migrate
 ```
 
-After the migration succeeds, start the app and visit `/setup` to create the first real system admin.
+After the migration succeeds, start the app and visit `/setup` to create the first real super admin.

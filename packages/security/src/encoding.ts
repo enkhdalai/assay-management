@@ -33,6 +33,24 @@ export async function sha256Base64Url(value: string): Promise<string> {
   return bytesToBase64Url(new Uint8Array(digest));
 }
 
+/** Produces a compact HMAC signature suitable for server-to-server requests. */
+export async function hmacSha256Base64Url(secret: string, value: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(value),
+  );
+
+  return bytesToBase64Url(new Uint8Array(signature));
+}
+
 export function timingSafeEqual(a: string, b: string): boolean {
   const aBytes = new TextEncoder().encode(a);
   const bBytes = new TextEncoder().encode(b);

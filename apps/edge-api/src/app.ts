@@ -1,9 +1,14 @@
 import { Hono } from "hono";
 
-import type { AssayApiRecord } from "../../../packages/shared/src/assay-types";
-import { getAuthenticatedUserFromRequest } from "./auth/http";
+import { assayResultRoutes } from "./assay-results/routes";
+import { assayRoutes } from "./assays/routes";
 import { authRoutes } from "./auth/routes";
 import { setupRoutes } from "./auth/setup-routes";
+import { bomRoutes } from "./bom/routes";
+import { bankRoutes } from "./banks/routes";
+import { customerRoutes } from "./customers/routes";
+import { apiSecurityMiddleware, applyApiSecurityHeaders } from "./security/middleware";
+import { userRoutes } from "./users/routes";
 
 export type AssetFetcher = {
   fetch(request: Request): Promise<Response>;
@@ -17,6 +22,9 @@ export type EdgeApiEnv = {
   AUTH_DEV_LOGIN_ENABLED?: string;
   AUTH_DEV_SEED_EMAIL?: string;
   AUTH_DEV_SEED_PASSWORD?: string;
+  RATE_LIMITING_ENABLED?: string;
+  BOM_API_CLIENT_ID?: string;
+  BOM_API_SIGNING_SECRET?: string;
   IMAGES?: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -29,24 +37,18 @@ export type EdgeApiEnv = {
   };
 };
 
-const sampleAssay: AssayApiRecord = {
-  id: "AC-260820-014",
-  customerName: "Б. Энхбат",
-  metal: "gold",
-  grossWeightGrams: 126.45,
-  purityPercent: 89.72,
-  fineWeightGrams: 113.45,
-  status: "manager_review",
-  allocations: [
-    { bankName: "Хаан банк", allocatedGrams: 70 },
-    { bankName: "Голомт банк", allocatedGrams: 56.45 },
-  ],
-};
-
 export const edgeApi = new Hono<{ Bindings: EdgeApiEnv }>().basePath("/api");
 
+edgeApi.use("*", apiSecurityMiddleware);
+
 edgeApi.route("/auth", authRoutes);
+edgeApi.route("/v1/assays", assayRoutes);
+edgeApi.route("/v1/assay-results", assayResultRoutes);
+edgeApi.route("/v1/customers", customerRoutes);
+edgeApi.route("/v1/users", userRoutes);
+edgeApi.route("/v1/banks", bankRoutes);
 edgeApi.route("/setup", setupRoutes);
+edgeApi.route("/bom/v1", bomRoutes);
 
 edgeApi.get("/health", (c) =>
   c.json({
@@ -56,13 +58,19 @@ edgeApi.get("/health", (c) =>
   }),
 );
 
-edgeApi.get("/v1/assays", async (c) => {
-  const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
-  if (!user) return c.json({ ok: false, message: "Нэвтрэх шаардлагатай." }, 401);
+edgeApi.notFound((c) => {
+  const requestId = c.req.header("x-request-id")?.trim() || crypto.randomUUID();
+  const response = c.json({ ok: false, message: "API зам олдсонгүй.", requestId }, 404);
+  applyApiSecurityHeaders(response.headers, requestId);
+  return response;
+});
 
-  return c.json({
-    data: [sampleAssay],
-    securityNote:
-      "Production endpoints will require signed requests, scoped roles, and append-only audit logging.",
-  });
+edgeApi.onError((error, c) => {
+  // Keep operational detail out of responses; sensitive requests can contain
+  // financial and personal data. The request ID is safe to share for support.
+  console.error("Assay API request failed", { name: error.name });
+  const requestId = c.req.header("x-request-id")?.trim() || crypto.randomUUID();
+  const response = c.json({ ok: false, message: "Системийн алдаа гарлаа.", requestId }, 500);
+  applyApiSecurityHeaders(response.headers, requestId);
+  return response;
 });

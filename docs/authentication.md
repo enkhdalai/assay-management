@@ -27,7 +27,7 @@ Postgres deployment.
 
 ## First Admin Setup
 
-An empty database can create the first `system_admin` through `/setup`.
+An empty database can create the first super admin (`system_admin`) through `/setup`.
 The API requires a one-time setup token. Store only the SHA-256 base64url hash
 of that token in `AUTH_SETUP_TOKEN_HASH`; do not store the raw token in source
 control.

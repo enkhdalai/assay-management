@@ -3,3 +3,9 @@ AUTH_SETUP_TOKEN_HASH=
 AUTH_DEV_LOGIN_ENABLED=true
 AUTH_DEV_SEED_EMAIL=admin@example.local
 AUTH_DEV_SEED_PASSWORD=ChangeThisStrongPassword123
+# Keep this false in local development. Production rate limiting must also be
+# enforced with a Cloudflare WAF or Rate Limiting rule at the zone edge.
+RATE_LIMITING_ENABLED=false
+# Bank of Mongolia server-to-server integration. Do not commit real values.
+BOM_API_CLIENT_ID=
+BOM_API_SIGNING_SECRET=

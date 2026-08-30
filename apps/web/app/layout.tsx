@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Сорьцын төвийн удирдлага",
   description:
-    "Алт, мөнгөний сорьцын бүртгэл, банкны хуваарилалт, Монголбанкны API солилцооны хувийн систем.",
+    "Алт, мөнгөний сорьцын бүртгэл, банкны хуваарилалт, баталгаажуулалтын хувийн систем.",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",

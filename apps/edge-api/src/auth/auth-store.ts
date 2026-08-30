@@ -97,7 +97,7 @@ export class InMemoryAuthStore implements AuthStore {
       organizationName: "Төв сорьцын лаборатори",
       role: "system_admin",
       email,
-      fullName: "Системийн админ",
+      fullName: "Супер админ",
       passwordHash: await hashPassword(seed.password),
       status: "active",
       failedLoginCount: 0,

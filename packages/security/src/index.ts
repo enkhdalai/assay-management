@@ -6,6 +6,7 @@ export {
 export type { AppRole } from "./permissions";
 export {
   bytesToBase64Url,
+  hmacSha256Base64Url,
   randomBase64Url,
   sha256Base64Url,
   timingSafeEqual,

@@ -31,6 +31,7 @@ export type AllocationStatus =
   | "cancelled";
 
 export type BankAllocation = {
+  bankId?: string;
   bankName: string;
   allocatedGrams: number;
 };
@@ -40,8 +41,54 @@ export type AssayApiRecord = {
   customerName: string;
   metal: MetalType;
   grossWeightGrams: number;
-  purityPercent: number;
-  fineWeightGrams: number;
+  declaredWeightGrams: number;
+  purityPercent: number | null;
+  fineWeightGrams: number | null;
   status: AssayStatus;
   allocations: BankAllocation[];
+  receivedAt: string | null;
+};
+
+export type CreateAssayInput = {
+  customerId?: string;
+  customerName: string;
+  customerType: "individual" | "legal_entity";
+  customerRegistrationNumber?: string;
+  customerEmail?: string;
+  customerPhone?: string;
+  metal: MetalType;
+  declaredWeightGrams: number;
+  receivedWeightGrams: number;
+  customerInstruction?: string;
+  allocations: BankAllocation[];
+};
+
+export type AssayResultRevision = {
+  id: string;
+  revisionNo: number;
+  status: AssayResultStatus;
+  methodName: string;
+  instrumentName: string | null;
+  grossWeightGrams: number;
+  purityPercent: number;
+  fineWeightGrams: number;
+  resultNotes: string | null;
+  enteredByName: string;
+  approvedByName: string | null;
+  submittedAt: string | null;
+  approvedAt: string | null;
+  createdAt: string;
+};
+
+export type AssayResultWorkItem = AssayApiRecord & {
+  intakeOfficerName: string | null;
+  latestResult: AssayResultRevision | null;
+};
+
+export type SubmitAssayResultInput = {
+  methodName: "XRF" | "Fire assay" | "ICP" | "Бусад";
+  instrumentName?: string;
+  grossWeightGrams: number;
+  purityPercent: number;
+  resultNotes?: string;
 };

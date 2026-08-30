@@ -17,7 +17,9 @@
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "setup:token": "node scripts/hash-setup-token.mjs"
+    "setup:token": "node scripts/hash-setup-token.mjs",
+    "setup:rotate": "node scripts/rotate-setup-token.mjs",
+    "setup:verify": "node scripts/verify-setup-token.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
