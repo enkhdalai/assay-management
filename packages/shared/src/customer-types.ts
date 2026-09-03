@@ -20,4 +20,20 @@ export type CreateCustomerInput = {
   email?: string;
   phone?: string;
   address?: string;
+  organizationProfile?: OrganizationProfileInput;
+};
+
+export type OrganizationProfileInput = {
+  depositName?: string;
+  branchName?: string;
+  organizationKind?: string;
+  bankName?: string;
+  bankAccount?: string;
+  province?: string;
+  district?: string;
+  bag?: string;
+  mineInitialNumber?: string;
+  contactName?: string;
+  contactPhone?: string;
+  notes?: string;
 };

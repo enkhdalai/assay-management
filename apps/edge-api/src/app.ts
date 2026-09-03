@@ -6,6 +6,7 @@ import { authRoutes } from "./auth/routes";
 import { setupRoutes } from "./auth/setup-routes";
 import { bomRoutes } from "./bom/routes";
 import { bankRoutes } from "./banks/routes";
+import { bullionRoutes } from "./bullion/routes";
 import { customerRoutes } from "./customers/routes";
 import { apiSecurityMiddleware, applyApiSecurityHeaders } from "./security/middleware";
 import { userRoutes } from "./users/routes";
@@ -18,6 +19,8 @@ export type EdgeApiEnv = {
   ASSETS: AssetFetcher;
   DB?: unknown;
   DATABASE_URL?: string;
+  APP_ENV?: string;
+  FIELD_ENCRYPTION_KEY?: string;
   AUTH_SETUP_TOKEN_HASH?: string;
   AUTH_DEV_LOGIN_ENABLED?: string;
   AUTH_DEV_SEED_EMAIL?: string;
@@ -47,6 +50,7 @@ edgeApi.route("/v1/assay-results", assayResultRoutes);
 edgeApi.route("/v1/customers", customerRoutes);
 edgeApi.route("/v1/users", userRoutes);
 edgeApi.route("/v1/banks", bankRoutes);
+edgeApi.route("/v1/bullion", bullionRoutes);
 edgeApi.route("/setup", setupRoutes);
 edgeApi.route("/bom/v1", bomRoutes);
 

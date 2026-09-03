@@ -20,7 +20,18 @@ export type {
   CreateCustomerInput,
   CustomerRecord,
   CustomerType,
+  OrganizationProfileInput,
 } from "./customer-types";
+export type {
+  BullionCalculation,
+  BullionIntakeBatchRecord,
+  BullionIntakeItemInput,
+  BullionIntakeItemRecord,
+  BullionMeasurementEntry,
+  BullionWeightEntry,
+  CreateBullionIntakeInput,
+  SubmitBullionExaminationInput,
+} from "./bullion-types";
 export type {
   BankDirectoryRecord,
   BankOrganizationStatus,

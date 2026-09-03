@@ -1,6 +1,7 @@
 import type { MiddlewareHandler } from "hono";
 
 import type { EdgeApiEnv } from "../app";
+import { isValidFieldEncryptionKey } from "../../../../packages/security/src";
 
 const MAX_JSON_BODY_BYTES = 64 * 1024;
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -19,6 +20,11 @@ export const apiSecurityMiddleware: MiddlewareHandler<{ Bindings: EdgeApiEnv }> 
   const method = request.method.toUpperCase();
   const url = new URL(request.url);
   const requestId = request.headers.get("x-request-id")?.trim() || crypto.randomUUID();
+
+  const productionConfigurationError = getProductionConfigurationError(c.env);
+  if (productionConfigurationError) {
+    return securityError(c, 503, productionConfigurationError, requestId);
+  }
 
   if (!isValidRequestId(requestId)) {
     return securityError(c, 400, "Хүсэлтийн дугаар буруу байна.", requestId);
@@ -71,7 +77,7 @@ function securityError(
   message: string,
   requestId: string,
 ) {
-  const response = c.json({ ok: false, message, requestId }, status as 400 | 403 | 413 | 415 | 429);
+  const response = c.json({ ok: false, message, requestId }, status as 400 | 403 | 413 | 415 | 429 | 503);
   applyApiSecurityHeaders(response.headers, requestId);
   return response;
 }
@@ -132,4 +138,15 @@ function ratePolicy(pathname: string): { name: string; maxRequests: number; wind
     return { name: "bom", maxRequests: 120, windowMs: 60 * 1000 };
   }
   return { name: "api", maxRequests: 240, windowMs: 60 * 1000 };
+}
+
+function getProductionConfigurationError(env: EdgeApiEnv): string | null {
+  if (env.APP_ENV !== "production") return null;
+  if (!env.DATABASE_URL) return "Production database тохируулаагүй байна.";
+  if (env.AUTH_DEV_LOGIN_ENABLED === "true") return "Production хөгжүүлэлтийн нэвтрэх тохиргоотой байна.";
+  if (env.RATE_LIMITING_ENABLED !== "true") return "Production rate limit тохируулаагүй байна.";
+  if (!isValidFieldEncryptionKey(env.FIELD_ENCRYPTION_KEY)) {
+    return "Production өгөгдлийн encryption key тохируулаагүй байна.";
+  }
+  return null;
 }

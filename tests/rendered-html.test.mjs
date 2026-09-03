@@ -697,6 +697,24 @@ test("adds private API security headers and rejects cross-origin writes", async 
   assert.match(blocked.headers.get("x-request-id") ?? "", /./);
 });
 
+test("fails closed when production security configuration is incomplete", async () => {
+  const worker = await loadWorker();
+  const response = await worker.fetch(
+    new Request("https://assay.example/api/health"),
+    {
+      ...createTestEnv(),
+      APP_ENV: "production",
+      DATABASE_URL: "postgresql://not-used-in-this-test",
+      AUTH_DEV_LOGIN_ENABLED: "true",
+      RATE_LIMITING_ENABLED: "false",
+    },
+    testContext,
+  );
+
+  assert.equal(response.status, 503);
+  assert.match((await response.json()).message, /хөгжүүлэлтийн нэвтрэх/);
+});
+
 test("keeps Bank of Mongolia endpoints closed until production credentials are configured", async () => {
   const worker = await loadWorker();
   const response = await worker.fetch(

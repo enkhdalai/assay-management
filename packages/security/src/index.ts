@@ -11,6 +11,12 @@ export {
   sha256Base64Url,
   timingSafeEqual,
 } from "./encoding";
+export {
+  assertFieldEncryptionKey,
+  decryptField,
+  encryptField,
+  isValidFieldEncryptionKey,
+} from "./field-encryption";
 export { assertAcceptablePassword, hashPassword, verifyPassword } from "./password";
 export {
   AUTH_SESSION_COOKIE,

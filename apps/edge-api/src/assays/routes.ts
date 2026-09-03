@@ -11,6 +11,8 @@ import type {
   CreateAssayInput,
 } from "../../../../packages/shared/src";
 import {
+  encryptField,
+  isValidFieldEncryptionKey,
   sha256Base64Url,
   type AuthenticatedUser,
 } from "../../../../packages/security/src";
@@ -60,7 +62,7 @@ assayRoutes.post("/", async (c) => {
   }
 
   const record = c.env.DATABASE_URL
-    ? await createAssayInDatabase(createDatabase(c.env.DATABASE_URL), user, input)
+    ? await createAssayInDatabase(createDatabase(c.env.DATABASE_URL), user, input, c.env.FIELD_ENCRYPTION_KEY)
     : await createAssayInMemory(user, input);
 
   return c.json({ ok: true, record }, 201);
@@ -136,16 +138,13 @@ async function createAssayInDatabase(
   db: AppDatabase,
   user: AuthenticatedUser,
   input: CreateAssayInput,
+  encryptionKey?: string,
 ): Promise<AssayApiRecord> {
   const now = new Date();
-  const customerId = crypto.randomUUID();
+  const customer = await resolveAssayCustomer(db, user, input, encryptionKey);
   const assayRecordId = crypto.randomUUID();
   const sampleId = crypto.randomUUID();
   const publicId = await nextAssayPublicId(db, now);
-  const registrationHash = input.customerRegistrationNumber
-    ? await sha256Base64Url(input.customerRegistrationNumber)
-    : null;
-  const phoneHash = input.customerPhone ? await sha256Base64Url(input.customerPhone) : null;
   const bankAllocations = input.allocations.map((allocation) => ({
     bankId: allocation.bankId,
     allocatedGrams: toFixedDecimal(allocation.allocatedGrams),
@@ -175,44 +174,6 @@ async function createAssayInDatabase(
       FROM organizations o
       INNER JOIN input_banks ib ON ib."bankId" = o.id
     ),
-    created_customer AS (
-      INSERT INTO customers (
-        id,
-        type,
-        display_name,
-        registration_number_encrypted,
-        registration_number_hash,
-        phone_encrypted,
-        phone_hash,
-        email_encrypted,
-        created_by_user_id
-      )
-      VALUES (
-        ${customerId},
-        ${input.customerType},
-        ${input.customerName.trim()},
-        ${input.customerRegistrationNumber ? maskSensitiveValue(input.customerRegistrationNumber) : null},
-        ${registrationHash},
-        ${input.customerPhone ? maskPhone(input.customerPhone) : null},
-        ${phoneHash},
-        ${input.customerEmail ? maskEmail(input.customerEmail) : null},
-        ${user.id}
-      )
-      WHERE ${input.customerId ?? null} IS NULL
-      RETURNING id, display_name
-    ),
-    selected_customer AS (
-      SELECT c.id, c.display_name
-      FROM customers c
-      INNER JOIN users creator ON creator.id = c.created_by_user_id
-      WHERE c.id = ${input.customerId ?? null}
-        AND (${user.role === "system_admin"} OR creator.organization_id = ${user.organizationId})
-    ),
-    customer_source AS (
-      SELECT id, display_name FROM created_customer
-      UNION ALL
-      SELECT id, display_name FROM selected_customer
-    ),
     created_record AS (
       INSERT INTO assay_records (
         id,
@@ -231,7 +192,7 @@ async function createAssayInDatabase(
         ${assayRecordId},
         ${publicId},
         ${user.organizationId},
-        id,
+        ${customer.id},
         ${user.id},
         ${input.metal},
         ${toFixedDecimal(input.declaredWeightGrams)},
@@ -239,7 +200,6 @@ async function createAssayInDatabase(
         'received',
         ${input.customerInstruction?.trim() || null},
         ${now}
-      FROM customer_source
       RETURNING id, public_id, metal, declared_gross_weight_grams, received_gross_weight_grams, status, received_at
     ),
     created_sample AS (
@@ -303,7 +263,7 @@ async function createAssayInDatabase(
     )
     SELECT
       cr.public_id AS "id",
-      cc.display_name AS "customerName",
+      ${customer.displayName} AS "customerName",
       cr.metal,
       cr.declared_gross_weight_grams::float AS "declaredWeightGrams",
       cr.received_gross_weight_grams::float AS "grossWeightGrams",
@@ -326,7 +286,6 @@ async function createAssayInDatabase(
         '[]'::json
       ) AS allocations
     FROM created_record cr
-    CROSS JOIN customer_source cc
   `);
   const [record] = readRows(result).map(mapAssayRecordRow);
 
@@ -335,6 +294,53 @@ async function createAssayInDatabase(
   }
 
   return record;
+}
+
+async function resolveAssayCustomer(
+  db: AppDatabase,
+  user: AuthenticatedUser,
+  input: CreateAssayInput,
+  encryptionKey?: string,
+): Promise<{ id: string; displayName: string }> {
+  if (input.customerId) {
+    const [existing] = readRows(await db.execute<{ id: string; displayName: string }>(sql`
+      SELECT c.id, c.display_name AS "displayName"
+      FROM customers c
+      INNER JOIN users creator ON creator.id = c.created_by_user_id
+      WHERE c.id = ${input.customerId}
+        AND (${user.role === "system_admin"} OR creator.organization_id = ${user.organizationId})
+      LIMIT 1
+    `));
+    if (!existing) throw new Error("Selected customer is unavailable.");
+    return existing;
+  }
+
+  const id = crypto.randomUUID();
+  const registrationHash = input.customerRegistrationNumber
+    ? await sha256Base64Url(input.customerRegistrationNumber)
+    : null;
+  const phoneHash = input.customerPhone ? await sha256Base64Url(input.customerPhone) : null;
+  const [registrationNumberEncrypted, phoneEncrypted, emailEncrypted] = await Promise.all([
+    input.customerRegistrationNumber ? protectSensitiveValue(input.customerRegistrationNumber, encryptionKey, maskSensitiveValue) : null,
+    input.customerPhone ? protectSensitiveValue(input.customerPhone, encryptionKey, maskPhone) : null,
+    input.customerEmail ? protectSensitiveValue(input.customerEmail, encryptionKey, maskEmail) : null,
+  ]);
+  const [created] = readRows(await db.execute<{ id: string; displayName: string }>(sql`
+    INSERT INTO customers (
+      id, type, display_name, registration_number_encrypted,
+      registration_number_hash, phone_encrypted, phone_hash, email_encrypted,
+      created_by_user_id
+    ) VALUES (
+      ${id}, ${input.customerType}, ${input.customerName.trim()},
+      ${registrationNumberEncrypted},
+      ${registrationHash}, ${phoneEncrypted},
+      ${phoneHash}, ${emailEncrypted},
+      ${user.id}
+    )
+    RETURNING id, display_name AS "displayName"
+  `));
+  if (!created) throw new Error("Unable to create customer.");
+  return created;
 }
 
 function listAssaysFromMemory(user: AuthenticatedUser): AssayApiRecord[] {
@@ -549,6 +555,14 @@ function maskPhone(value: string): string {
   const trimmed = value.trim();
   if (trimmed.length <= 4) return "****";
   return `${"*".repeat(Math.max(0, trimmed.length - 4))}${trimmed.slice(-4)}`;
+}
+
+async function protectSensitiveValue(
+  value: string,
+  encryptionKey: string | undefined,
+  legacyMask: (value: string) => string,
+): Promise<string> {
+  return isValidFieldEncryptionKey(encryptionKey) ? encryptField(value, encryptionKey!) : legacyMask(value);
 }
 
 function readRows<T>(result: T[] | { rows: T[] }): T[] {

@@ -19,7 +19,8 @@
     "db:migrate": "drizzle-kit migrate",
     "setup:token": "node scripts/hash-setup-token.mjs",
     "setup:rotate": "node scripts/rotate-setup-token.mjs",
-    "setup:verify": "node scripts/verify-setup-token.mjs"
+    "setup:verify": "node scripts/verify-setup-token.mjs",
+    "security:field-key": "node scripts/generate-field-encryption-key.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

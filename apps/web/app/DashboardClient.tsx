@@ -6,6 +6,8 @@ import type {
   AssayApiRecord,
   AssayResultWorkItem,
   BankDirectoryRecord,
+  BullionIntakeBatchRecord,
+  CreateBullionIntakeInput,
   BankAllocation,
   CreateBankInput,
   CreateAssayInput,
@@ -19,13 +21,15 @@ import type {
 } from "../../../packages/shared/src";
 import { LogoutButton } from "./LogoutButton";
 
-type DashboardView = "dashboard" | "assayRecords" | "customers" | "assayResults" | "bankAccess" | "banks" | "auditLog" | "settings";
+type DashboardView = "dashboard" | "assayRecords" | "bullionIntake" | "customers" | "assayResults" | "bullionExamination" | "bankAccess" | "banks" | "auditLog" | "settings";
 
 const navigationItems = [
   { label: "Хяналтын самбар", view: "dashboard" },
   { label: "Сорьцын бүртгэл", view: "assayRecords" },
+  { label: "Гулдмай хүлээн авах", view: "bullionIntake" },
   { label: "Харилцагчид", view: "customers" },
   { label: "Шинжилгээний дүн", view: "assayResults" },
+  { label: "Гулдмайн шинжилгээ", view: "bullionExamination" },
   { label: "Банк хуваарилалт", view: "bankAccess" },
   { label: "Арилжааны банкууд", view: "banks" },
   { label: "Тайлан", href: "#" },
@@ -114,6 +118,10 @@ export function DashboardClient() {
   const [isBanksLoading, setIsBanksLoading] = useState(false);
   const [banksError, setBanksError] = useState("");
   const [hasLoadedBanks, setHasLoadedBanks] = useState(false);
+  const [bullionBatches, setBullionBatches] = useState<BullionIntakeBatchRecord[]>([]);
+  const [isBullionLoading, setIsBullionLoading] = useState(false);
+  const [bullionError, setBullionError] = useState("");
+  const [hasLoadedBullion, setHasLoadedBullion] = useState(false);
 
   async function loadRecords() {
     setError("");
@@ -130,11 +138,14 @@ export function DashboardClient() {
   }
 
   useEffect(() => {
-    loadRecords()
-      .catch((loadError: unknown) => {
-        setError(loadError instanceof Error ? loadError.message : "Сүлжээний алдаа гарлаа.");
-      })
-      .finally(() => setIsLoading(false));
+    const timer = setTimeout(() => {
+      void loadRecords()
+        .catch((loadError: unknown) => {
+          setError(loadError instanceof Error ? loadError.message : "Сүлжээний алдаа гарлаа.");
+        })
+        .finally(() => setIsLoading(false));
+    }, 0);
+    return () => clearTimeout(timer);
   }, []);
 
   async function loadUsers() {
@@ -227,6 +238,24 @@ export function DashboardClient() {
     }
   }
 
+  async function loadBullionIntakes() {
+    setBullionError("");
+    setIsBullionLoading(true);
+    try {
+      const response = await fetch("/api/v1/bullion/intakes", { headers: { accept: "application/json" } });
+      const body = await response.json().catch(() => null);
+      if (!response.ok || !Array.isArray(body?.data)) {
+        throw new Error(body?.message ?? "Гулдмайн бүртгэл татах үед алдаа гарлаа.");
+      }
+      setBullionBatches(body.data);
+      setHasLoadedBullion(true);
+    } catch (loadError) {
+      setBullionError(loadError instanceof Error ? loadError.message : "Сүлжээний алдаа гарлаа.");
+    } finally {
+      setIsBullionLoading(false);
+    }
+  }
+
   function openView(view: DashboardView) {
     setActiveView(view);
     if (view === "settings" && !hasLoadedUsers && !isUsersLoading) {
@@ -240,6 +269,12 @@ export function DashboardClient() {
     }
     if (view === "banks" && !hasLoadedBanks && !isBanksLoading) {
       void loadBanks();
+    }
+    if ((view === "bullionIntake" || view === "bullionExamination") && !hasLoadedBullion && !isBullionLoading) {
+      void loadBullionIntakes();
+    }
+    if ((view === "bullionIntake" || view === "bullionExamination") && !hasLoadedCustomers && !isCustomersLoading) {
+      void loadCustomers();
     }
   }
 
@@ -517,6 +552,14 @@ export function DashboardClient() {
             onOpenCreate={openCreateAssay}
             onRefresh={loadRecords}
           />
+        ) : activeView === "bullionIntake" ? (
+          <BullionIntakeView
+            customers={customers}
+            error={bullionError || customersError}
+            isLoading={isBullionLoading || isCustomersLoading}
+            onCreated={(record) => setBullionBatches((current) => [record, ...current])}
+            batches={bullionBatches}
+          />
         ) : activeView === "customers" ? (
           <CustomersView
             customers={customers}
@@ -536,6 +579,12 @@ export function DashboardClient() {
             onOpenEntry={setSelectedResultItem}
             onOpenTracking={setTrackingItem}
             onRefresh={loadResultItems}
+          />
+        ) : activeView === "bullionExamination" ? (
+          <BullionExaminationView
+            batches={bullionBatches}
+            error={bullionError}
+            isLoading={isBullionLoading}
           />
         ) : activeView === "bankAccess" ? (
           <BankAccessView
@@ -1739,12 +1788,19 @@ function CreateAssayDialog({
   const selectedCustomer = customers.find((customer) => customer.id === selectedCustomerId) ?? null;
 
   useEffect(() => {
-    if (!selectedCustomerId && customers[0]) setSelectedCustomerId(customers[0].id);
+    if (!selectedCustomerId && customers[0]) {
+      const timer = setTimeout(() => setSelectedCustomerId(customers[0].id), 0);
+      return () => clearTimeout(timer);
+    }
   }, [customers, selectedCustomerId]);
 
   useEffect(() => {
     if (allocations.length === 0 && activeBanks[0]) {
-      setAllocations([{ bankId: activeBanks[0].id, bankName: activeBanks[0].name, allocatedGrams: 0 }]);
+      const bank = activeBanks[0];
+      const timer = setTimeout(() => {
+        setAllocations([{ bankId: bank.id, bankName: bank.name, allocatedGrams: 0 }]);
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [activeBanks, allocations.length]);
 
@@ -1999,6 +2055,87 @@ function CreateAssayDialog({
   );
 }
 
+function BullionIntakeView({
+  batches,
+  customers,
+  error,
+  isLoading,
+  onCreated,
+}: {
+  batches: BullionIntakeBatchRecord[];
+  customers: CustomerRecord[];
+  error: string;
+  isLoading: boolean;
+  onCreated(record: BullionIntakeBatchRecord): void;
+}) {
+  const [metal, setMetal] = useState<MetalType>("gold");
+  const [rows, setRows] = useState([{ analysisNo: "", bullionNo: "", grossWeightBeforeGrams: "", grossWeightAfterGrams: "", slagWeightGrams: "", sampleWeightMilligrams: "" }]);
+  const [message, setMessage] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  function updateRow(index: number, key: string, value: string) {
+    setRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, [key]: value } : row));
+  }
+  async function submit(event: FormEvent<HTMLFormElement>, status: "draft" | "sample_taken") {
+    event.preventDefault();
+    setMessage("");
+    const form = new FormData(event.currentTarget);
+    const payload: CreateBullionIntakeInput = {
+      customerId: readFormText(form, "customerId"), metal, receivedAt: readFormText(form, "receivedAt"),
+      initialBullionNumber: readFormText(form, "initialBullionNumber"), branchName: readFormText(form, "branchName"),
+      province: readFormText(form, "province"), district: readFormText(form, "district"), dispatchReference: readFormText(form, "dispatchReference"),
+      delta: readFormNumber(form, "delta"), status,
+      items: rows.map((row) => ({ analysisNo: row.analysisNo, bullionNo: row.bullionNo, grossWeightBeforeGrams: Number(row.grossWeightBeforeGrams), grossWeightAfterGrams: optionalNumber(row.grossWeightAfterGrams), slagWeightGrams: optionalNumber(row.slagWeightGrams), sampleWeightMilligrams: optionalNumber(row.sampleWeightMilligrams) })),
+    };
+    setIsSubmitting(true);
+    try {
+      const response = await fetch("/api/v1/bullion/intakes", { method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(payload) });
+      const body = await response.json().catch(() => null);
+      if (!response.ok || !body?.record) throw new Error(body?.message ?? "Гулдмайн бүртгэл хадгалах үед алдаа гарлаа.");
+      onCreated(body.record);
+      setMessage(status === "sample_taken" ? "Дээж авахад бэлэн гулдмайн бүртгэл үүслээ." : "Ноорог гулдмайн бүртгэл хадгалагдлаа.");
+      setRows([{ analysisNo: "", bullionNo: "", grossWeightBeforeGrams: "", grossWeightAfterGrams: "", slagWeightGrams: "", sampleWeightMilligrams: "" }]);
+    } catch (submitError) { setMessage(submitError instanceof Error ? submitError.message : "Сүлжээний алдаа гарлаа."); }
+    finally { setIsSubmitting(false); }
+  }
+
+  return <>
+    <section className="panel bullion-panel">
+      <div className="panel-header"><div><p className="eyebrow">Нэг хүлээн авалтад олон гулдмай</p><h2>{metal === "gold" ? "Алтан гулдмай хүлээн авах" : "Мөнгөн гулдмай хүлээн авах"}</h2></div><select aria-label="Металл" value={metal} onChange={(event) => setMetal(event.target.value as MetalType)}><option value="gold">Алт</option><option value="silver">Мөнгө</option></select></div>
+      <form className="assay-form" onSubmit={(event) => submit(event, "draft")}>
+        <div className="form-grid bullion-details">
+          <label><span>Огноо</span><input name="receivedAt" defaultValue={new Date().toISOString().slice(0, 10)} type="date" /></label>
+          <label><span>Харилцагч</span><select name="customerId" required disabled={isLoading}><option value="">Сонгоно уу</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.displayName}</option>)}</select></label>
+          <label><span>Гулдмайн эхлэх дугаар</span><input name="initialBullionNumber" /></label>
+          <label><span>Салбар</span><input name="branchName" /></label>
+          <label><span>Аймаг, хот</span><input name="province" /></label>
+          <label><span>Сум, дүүрэг</span><input name="district" /></label>
+          <label><span>Гарал, хүсэл</span><input name="dispatchReference" /></label>
+          <label><span>Делта</span><input name="delta" defaultValue="0" inputMode="decimal" /></label>
+        </div>
+        <div className="bullion-grid" role="table" aria-label="Гулдмайн мөрүүд"><div className="bullion-grid-head" role="row"><span>Шинжилгээ №</span><span>Гулдмай №</span><span>Хүлээн авсан жин /гр/</span><span>Дараах жин /гр/</span><span>Шлак /гр/</span><span>Дээжийн жин /мг/</span><span /></div>{rows.map((row, index) => <div className="bullion-grid-row" role="row" key={index}><input value={row.analysisNo} onChange={(event) => updateRow(index, "analysisNo", event.target.value)} /><input value={row.bullionNo} onChange={(event) => updateRow(index, "bullionNo", event.target.value)} required /><input value={row.grossWeightBeforeGrams} inputMode="decimal" onChange={(event) => updateRow(index, "grossWeightBeforeGrams", event.target.value)} required /><input value={row.grossWeightAfterGrams} inputMode="decimal" onChange={(event) => updateRow(index, "grossWeightAfterGrams", event.target.value)} /><input value={row.slagWeightGrams} inputMode="decimal" onChange={(event) => updateRow(index, "slagWeightGrams", event.target.value)} /><input value={row.sampleWeightMilligrams} inputMode="decimal" onChange={(event) => updateRow(index, "sampleWeightMilligrams", event.target.value)} /><button className="icon-button" type="button" aria-label="Мөр устгах" disabled={rows.length === 1} onClick={() => setRows((current) => current.filter((_, rowIndex) => rowIndex !== index))}>-</button></div>)}</div>
+        <div className="form-actions"><button className="secondary-button" type="button" onClick={() => setRows((current) => [...current, { analysisNo: "", bullionNo: "", grossWeightBeforeGrams: "", grossWeightAfterGrams: "", slagWeightGrams: "", sampleWeightMilligrams: "" }])}>Гулдмай нэмэх</button><span className="muted-text">Жин оруулах талбарт курсор байрлуулахад keyboard-wedge жин автоматаар орно.</span><button className="secondary-button" disabled={isSubmitting} type="button" onClick={(event) => { const form = event.currentTarget.form; if (form) void submit({ preventDefault: () => undefined, currentTarget: form } as FormEvent<HTMLFormElement>, "sample_taken"); }}>Дээж авах</button><button className="primary-button" disabled={isSubmitting} type="submit">{isSubmitting ? "Хадгалж байна..." : "Хадгалах"}</button></div>
+        {error || message ? <p className={error || message.includes("алдаа") ? "login-error" : "success-message"}>{error || message}</p> : null}
+      </form>
+    </section>
+    <section className="panel bullion-list"><div className="panel-header"><div><p className="eyebrow">Сүүлийн хүлээн авалт</p><h2>Гулдмайн бүртгэл</h2></div></div>{batches.length === 0 ? <p className="muted-text">Хадгалсан гулдмайн бүртгэл одоогоор байхгүй байна.</p> : <div className="record-table bullion-records"><div className="record-head"><span>№</span><span>Харилцагч</span><span>Металл</span><span>Ширхэг</span><span>Төлөв</span></div>{batches.map((batch) => <div className="record-row" key={batch.id}><strong>{batch.publicId}</strong><span>{batch.customerName}</span><span>{batch.metal === "gold" ? "Алт" : "Мөнгө"}</span><span>{batch.pieceCount}</span><span className="status-pill draft">{batch.status === "sample_taken" ? "Дээж авах" : "Ноорог"}</span></div>)}</div>}</section>
+  </>;
+}
+
+function BullionExaminationView({ batches, error, isLoading }: { batches: BullionIntakeBatchRecord[]; error: string; isLoading: boolean }) {
+  const items = batches.flatMap((batch) => batch.items.map((item) => ({ ...item, batch })));
+  const [selectedItemId, setSelectedItemId] = useState("");
+  const [message, setMessage] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  async function submit(event: FormEvent<HTMLFormElement>, status: "draft" | "submitted") {
+    event.preventDefault(); setMessage(""); const form = new FormData(event.currentTarget); setIsSubmitting(true);
+    const measurementLabels = ["Чек мөнгө", "Дээжийн үлдэгдэл жин", "Шинжилгээний хорогдол", "Королок, корточка"];
+    const payload = { bullionItemId: selectedItemId, examinationNo: readFormText(form, "examinationNo"), sampleWeightGrams: readFormNumber(form, "sampleWeightGrams"), delta: readFormNumber(form, "delta"), status, goldResult: optionalNumber(readFormText(form, "goldResult")), silverResult: optionalNumber(readFormText(form, "silverResult")), reexaminationRequested: form.get("reexaminationRequested") === "on", notes: readFormText(form, "notes"), weightEntries: Array.from({ length: 5 }, (_, index) => ({ receivedWeightGrams: readFormNumber(form, `received-${index}`), calculation: readFormText(form, `calculation-${index}`) || "no", outputWeightGrams: readFormNumber(form, `output-${index}`) })), measurementEntries: measurementLabels.map((label, index) => ({ label, reading: readFormNumber(form, `reading-${index}`), goldAssay: optionalNumber(readFormText(form, `gold-${index}`)), silverAssay: optionalNumber(readFormText(form, `silver-${index}`)) })) };
+    try { const response = await fetch("/api/v1/bullion/examinations", { method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(payload) }); const body = await response.json().catch(() => null); if (!response.ok) throw new Error(body?.message ?? "Шинжилгээ хадгалах үед алдаа гарлаа."); setMessage(status === "submitted" ? "Шинжилгээ эрхлэгчийн хяналтад илгээгдлээ." : "Шинжилгээний ноорог хадгалагдлаа."); } catch (submitError) { setMessage(submitError instanceof Error ? submitError.message : "Сүлжээний алдаа гарлаа."); } finally { setIsSubmitting(false); }
+  }
+  return <section className="panel bullion-panel"><div className="panel-header"><div><p className="eyebrow">Гулдмайн шинжилгээ</p><h2>Шинжилгээний дүн оруулах</h2></div></div><form className="assay-form" onSubmit={(event) => submit(event, "draft")}><div className="form-grid bullion-details"><label><span>Гулдмай</span><select value={selectedItemId} onChange={(event) => setSelectedItemId(event.target.value)} required disabled={isLoading}><option value="">Сонгоно уу</option>{items.map((item) => <option value={item.id} key={item.id}>{item.batch.publicId} / {item.bullionNo}</option>)}</select></label><label><span>Шинжилгээний №</span><input name="examinationNo" required /></label><label><span>Дээжийн жин /гр/</span><input name="sampleWeightGrams" inputMode="decimal" required /></label><label><span>Делта</span><input name="delta" defaultValue="0" inputMode="decimal" /></label></div><div className="examination-grid"><div><h3>Жингийн тооцоолол</h3>{Array.from({ length: 5 }, (_, index) => <div className="exam-row" key={index}><input name={`received-${index}`} defaultValue="0" inputMode="decimal" aria-label="Авсан жин" /><select name={`calculation-${index}`} aria-label="Бодлого"><option value="yes">Тийм</option><option value="no">Үгүй</option><option value="addition">Нэмэлт</option></select><input name={`output-${index}`} defaultValue="0" inputMode="decimal" aria-label="Гарсан жин" /></div>)}</div><div><h3>Хэмжилт</h3>{["Чек мөнгө", "Дээжийн үлдэгдэл жин", "Шинжилгээний хорогдол", "Королок, корточка"].map((label, index) => <div className="exam-row measurement" key={label}><span>{label}</span><input name={`reading-${index}`} defaultValue="0" inputMode="decimal" aria-label={`${label} үзүүлэлт`} /><input name={`gold-${index}`} defaultValue="0" inputMode="decimal" aria-label={`${label} алтны сорьц`} /><input name={`silver-${index}`} defaultValue="0" inputMode="decimal" aria-label={`${label} мөнгөний сорьц`} /></div>)}</div></div><div className="form-grid bullion-details"><label><span>Алтны сорьцын дүн</span><input name="goldResult" inputMode="decimal" /></label><label><span>Мөнгөний сорьцын дүн</span><input name="silverResult" inputMode="decimal" /></label><label className="checkbox-label"><input name="reexaminationRequested" type="checkbox" />Дахин шинжилгээ хийх</label><label><span>Тэмдэглэл</span><input name="notes" /></label></div><div className="form-actions"><button className="secondary-button" disabled={isSubmitting} type="button" onClick={(event) => { const form = event.currentTarget.form; if (form) void submit({ preventDefault: () => undefined, currentTarget: form } as FormEvent<HTMLFormElement>, "submitted"); }}>Шалгах</button><button className="primary-button" disabled={isSubmitting} type="submit">{isSubmitting ? "Хадгалж байна..." : "Хадгалах"}</button></div>{error || message ? <p className={error || message.includes("алдаа") ? "login-error" : "success-message"}>{error || message}</p> : null}</form></section>;
+}
+
 function CreateCustomerDialog({
   onClose,
   onCreated,
@@ -2008,6 +2145,7 @@ function CreateCustomerDialog({
 }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [customerType, setCustomerType] = useState<"individual" | "legal_entity">("individual");
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -2016,11 +2154,26 @@ function CreateCustomerDialog({
 
     const form = new FormData(event.currentTarget);
     const payload: CreateCustomerInput = {
-      type: readFormText(form, "type") === "legal_entity" ? "legal_entity" : "individual",
+      type: customerType,
       displayName: readFormText(form, "displayName"),
       registrationNumber: readFormText(form, "registrationNumber"),
       email: readFormText(form, "email"),
       phone: readFormText(form, "phone"),
+      address: readFormText(form, "address"),
+      organizationProfile: customerType === "legal_entity" ? {
+        depositName: readFormText(form, "depositName"),
+        branchName: readFormText(form, "branchName"),
+        organizationKind: readFormText(form, "organizationKind"),
+        bankName: readFormText(form, "bankName"),
+        bankAccount: readFormText(form, "bankAccount"),
+        province: readFormText(form, "province"),
+        district: readFormText(form, "district"),
+        bag: readFormText(form, "bag"),
+        mineInitialNumber: readFormText(form, "mineInitialNumber"),
+        contactName: readFormText(form, "contactName"),
+        contactPhone: readFormText(form, "contactPhone"),
+        notes: readFormText(form, "notes"),
+      } : undefined,
     };
 
     try {
@@ -2064,7 +2217,7 @@ function CreateCustomerDialog({
           <div className="form-grid">
             <label>
               <span>Харилцагчийн төрөл</span>
-              <select name="type">
+              <select name="type" value={customerType} onChange={(event) => setCustomerType(event.target.value as "individual" | "legal_entity")}>
                 <option value="individual">Иргэн</option>
                 <option value="legal_entity">Байгууллага</option>
               </select>
@@ -2085,6 +2238,21 @@ function CreateCustomerDialog({
               <span>Утас</span>
               <input name="phone" inputMode="tel" type="text" />
             </label>
+            {customerType === "legal_entity" ? <>
+              <label><span>Ордын нэр</span><input name="depositName" type="text" /></label>
+              <label><span>Байгууллагын төрөл</span><input name="organizationKind" type="text" /></label>
+              <label><span>Банкны нэр</span><input name="bankName" type="text" /></label>
+              <label><span>Банкны данс</span><input name="bankAccount" type="text" /></label>
+              <label><span>Аймаг / нийслэл</span><input name="province" type="text" /></label>
+              <label><span>Сум / дүүрэг</span><input name="district" type="text" /></label>
+              <label><span>Баг</span><input name="bag" type="text" /></label>
+              <label><span>Хаяг / байршил</span><input name="address" type="text" /></label>
+              <label><span>Салбар байгууллага</span><input name="branchName" type="text" /></label>
+              <label><span>Гулдмайн эхний дугаар</span><input name="mineInitialNumber" type="text" /></label>
+              <label><span>Харилцах албан хаагч</span><input name="contactName" type="text" /></label>
+              <label><span>Харилцах албан хаагчийн утас</span><input name="contactPhone" inputMode="tel" type="text" /></label>
+              <label><span>Тайлбар / онцлог</span><input name="notes" type="text" /></label>
+            </> : null}
           </div>
 
           <p className="muted-text security-hint">
@@ -2352,12 +2520,23 @@ function readFormNumber(form: FormData, key: string): number {
   return typeof value === "string" ? Number(value) : 0;
 }
 
+function optionalNumber(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 function getViewHeader(view: DashboardView): { eyebrow: string; title: string } {
   if (view === "assayRecords") {
     return {
       eyebrow: "Хүлээн авсан алт, мөнгөний бүртгэл",
       title: "Сорьцын бүртгэл",
     };
+  }
+
+  if (view === "bullionIntake") {
+    return { eyebrow: "Алт, мөнгөн гулдмайн хүлээн авалт", title: "Гулдмай хүлээн авах" };
   }
 
   if (view === "customers") {
@@ -2372,6 +2551,10 @@ function getViewHeader(view: DashboardView): { eyebrow: string; title: string } 
       eyebrow: "Лабораторийн дүн ба баталгаажуулалт",
       title: "Шинжилгээний дүн",
     };
+  }
+
+  if (view === "bullionExamination") {
+    return { eyebrow: "Лабораторийн нарийвчилсан шинжилгээ", title: "Гулдмайн шинжилгээ" };
   }
 
   if (view === "bankAccess") {

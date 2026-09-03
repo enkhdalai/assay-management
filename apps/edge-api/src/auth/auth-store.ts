@@ -13,7 +13,6 @@ import type {
   AcceptInvitationInput,
   AuthStore,
   AuthStoreEnv,
-  CreateFirstAdminInput,
   CreateInvitationInput,
   LoginResult,
   SetupStatus,
@@ -119,7 +118,7 @@ export class InMemoryAuthStore implements AuthStore {
     };
   }
 
-  async createFirstAdmin(_input: CreateFirstAdminInput): Promise<LoginResult> {
+  async createFirstAdmin(): Promise<LoginResult> {
     return { ok: false, reason: "disabled" };
   }
 

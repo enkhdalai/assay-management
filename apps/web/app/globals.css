@@ -1272,6 +1272,110 @@ h2 {
   outline: 0;
 }
 
+.bullion-panel,
+.bullion-list {
+  margin-bottom: 18px;
+}
+
+.bullion-details {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.bullion-grid {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-top: 18px;
+  overflow-x: auto;
+}
+
+.bullion-grid-head,
+.bullion-grid-row {
+  display: grid;
+  grid-template-columns: 130px 150px 170px 150px 120px 150px 42px;
+  gap: 8px;
+  min-width: 920px;
+  padding: 10px 12px;
+}
+
+.bullion-grid-head {
+  align-items: center;
+  background: var(--panel-soft);
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.bullion-grid-row {
+  border-bottom: 1px solid #edf1f7;
+}
+
+.bullion-grid-row:last-child {
+  border-bottom: 0;
+}
+
+.bullion-grid input,
+.exam-row input,
+.exam-row select {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  min-width: 0;
+  padding: 9px 10px;
+}
+
+.bullion-records .record-head,
+.bullion-records .record-row {
+  grid-template-columns: 1.2fr 1.3fr 0.65fr 0.5fr 0.8fr;
+}
+
+.examination-grid {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 20px 0;
+}
+
+.examination-grid h3 {
+  font-size: 15px;
+  font-weight: 500;
+  margin: 0 0 10px;
+}
+
+.exam-row {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr 1fr 1fr;
+  margin-bottom: 8px;
+}
+
+.exam-row.measurement {
+  grid-template-columns: 1.4fr 1fr 1fr 1fr;
+}
+
+.exam-row span {
+  color: #475569;
+  font-size: 13px;
+}
+
+.checkbox-label {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  padding-top: 28px;
+}
+
+.checkbox-label input {
+  height: 16px;
+  width: 16px;
+}
+
+.success-message {
+  color: var(--green);
+  font-size: 14px;
+  margin-top: 14px;
+}
+
 .security-hint {
   background: #f8fafc;
   border: 1px solid var(--line);

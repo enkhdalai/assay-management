@@ -330,6 +330,105 @@ export const customers = pgTable(
   ],
 );
 
+export const customerOrganizationProfiles = pgTable(
+  "customer_organization_profiles",
+  {
+    customerId: uuid("customer_id").references(() => customers.id, { onDelete: "cascade" }).primaryKey(),
+    depositName: varchar("deposit_name", { length: 255 }),
+    branchName: varchar("branch_name", { length: 255 }),
+    organizationKind: varchar("organization_kind", { length: 120 }),
+    bankName: varchar("bank_name", { length: 255 }),
+    bankAccountEncrypted: text("bank_account_encrypted"),
+    province: varchar("province", { length: 120 }),
+    district: varchar("district", { length: 120 }),
+    bag: varchar("bag", { length: 120 }),
+    mineInitialNumber: varchar("mine_initial_number", { length: 80 }),
+    contactName: varchar("contact_name", { length: 255 }),
+    contactPhoneEncrypted: text("contact_phone_encrypted"),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [index("customer_org_profiles_deposit_idx").on(table.depositName)],
+);
+
+export const bullionIntakeBatches = pgTable(
+  "bullion_intake_batches",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    publicId: varchar("public_id", { length: 40 }).notNull(),
+    assayCenterId: uuid("assay_center_id").references(() => organizations.id, { onDelete: "restrict" }).notNull(),
+    customerId: uuid("customer_id").references(() => customers.id, { onDelete: "restrict" }).notNull(),
+    receivedByUserId: uuid("received_by_user_id").references(() => users.id, { onDelete: "restrict" }).notNull(),
+    metal: metalType("metal").notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true }).defaultNow().notNull(),
+    branchName: varchar("branch_name", { length: 255 }),
+    province: varchar("province", { length: 120 }),
+    district: varchar("district", { length: 120 }),
+    dispatchReference: varchar("dispatch_reference", { length: 120 }),
+    initialBullionNumber: varchar("initial_bullion_number", { length: 80 }),
+    pieceCount: integer("piece_count").notNull(),
+    delta: numeric("delta", { precision: 14, scale: 6 }).default("0").notNull(),
+    status: varchar("status", { length: 32 }).default("draft").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("bullion_intake_batches_public_id_uidx").on(table.publicId),
+    index("bullion_intake_batches_customer_received_idx").on(table.customerId, table.receivedAt),
+    check("bullion_intake_batches_piece_count_positive", sql`${table.pieceCount} > 0`),
+  ],
+);
+
+export const bullionIntakeItems = pgTable(
+  "bullion_intake_items",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    batchId: uuid("batch_id").references(() => bullionIntakeBatches.id, { onDelete: "cascade" }).notNull(),
+    sequenceNo: integer("sequence_no").notNull(),
+    analysisNo: varchar("analysis_no", { length: 80 }),
+    bullionNo: varchar("bullion_no", { length: 80 }).notNull(),
+    grossWeightBeforeGrams: numeric("gross_weight_before_grams", { precision: 14, scale: 4 }).notNull(),
+    grossWeightAfterGrams: numeric("gross_weight_after_grams", { precision: 14, scale: 4 }),
+    slagWeightGrams: numeric("slag_weight_grams", { precision: 14, scale: 4 }),
+    sampleWeightMilligrams: numeric("sample_weight_milligrams", { precision: 14, scale: 4 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("bullion_intake_items_batch_sequence_uidx").on(table.batchId, table.sequenceNo),
+    index("bullion_intake_items_bullion_no_idx").on(table.bullionNo),
+    check("bullion_intake_items_weight_positive", sql`${table.grossWeightBeforeGrams} > 0`),
+  ],
+);
+
+export const bullionExaminationRevisions = pgTable(
+  "bullion_examination_revisions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    bullionItemId: uuid("bullion_item_id").references(() => bullionIntakeItems.id, { onDelete: "cascade" }).notNull(),
+    revisionNo: integer("revision_no").notNull(),
+    examinationNo: varchar("examination_no", { length: 80 }).notNull(),
+    enteredByUserId: uuid("entered_by_user_id").references(() => users.id, { onDelete: "restrict" }).notNull(),
+    status: assayResultStatus("status").default("draft").notNull(),
+    delta: numeric("delta", { precision: 14, scale: 6 }).default("0").notNull(),
+    sampleWeightGrams: numeric("sample_weight_grams", { precision: 14, scale: 4 }).notNull(),
+    weightEntries: jsonb("weight_entries").default([]).notNull(),
+    measurementEntries: jsonb("measurement_entries").default([]).notNull(),
+    goldResult: numeric("gold_result", { precision: 12, scale: 6 }),
+    silverResult: numeric("silver_result", { precision: 12, scale: 6 }),
+    reexaminationRequested: boolean("reexamination_requested").default(false).notNull(),
+    notes: text("notes"),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("bullion_examinations_item_revision_uidx").on(table.bullionItemId, table.revisionNo),
+    index("bullion_examinations_status_idx").on(table.status),
+    check("bullion_examinations_revision_positive", sql`${table.revisionNo} > 0`),
+    check("bullion_examinations_sample_weight_positive", sql`${table.sampleWeightGrams} > 0`),
+  ],
+);
+
 export const assayRecords = pgTable(
   "assay_records",
   {

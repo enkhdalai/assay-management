@@ -11,6 +11,9 @@ import type {
   CustomerType,
 } from "../../../../packages/shared/src";
 import {
+  decryptField,
+  encryptField,
+  isValidFieldEncryptionKey,
   sha256Base64Url,
   type AuthenticatedUser,
 } from "../../../../packages/security/src";
@@ -40,7 +43,7 @@ customerRoutes.get("/", async (c) => {
   }
 
   const records = c.env.DATABASE_URL
-    ? await listCustomersFromDatabase(createDatabase(c.env.DATABASE_URL), user)
+    ? await listCustomersFromDatabase(createDatabase(c.env.DATABASE_URL), user, c.env.FIELD_ENCRYPTION_KEY)
     : listCustomersFromMemory();
 
   return c.json({ ok: true, data: records });
@@ -61,7 +64,7 @@ customerRoutes.post("/", async (c) => {
   }
 
   const record = c.env.DATABASE_URL
-    ? await createCustomerInDatabase(createDatabase(c.env.DATABASE_URL), user, input)
+    ? await createCustomerInDatabase(createDatabase(c.env.DATABASE_URL), user, input, c.env.FIELD_ENCRYPTION_KEY)
     : await createCustomerInMemory(input);
 
   return c.json({ ok: true, record }, 201);
@@ -70,6 +73,7 @@ customerRoutes.post("/", async (c) => {
 async function listCustomersFromDatabase(
   db: AppDatabase,
   user: AuthenticatedUser,
+  encryptionKey?: string,
 ): Promise<CustomerRecord[]> {
   const organizationFilter = user.role === "system_admin"
     ? sql``
@@ -103,19 +107,26 @@ async function listCustomersFromDatabase(
     LIMIT 200
   `);
 
-  return readRows(result).map(mapCustomerRow);
+  return Promise.all(readRows(result).map((row) => mapCustomerRow(row, encryptionKey)));
 }
 
 async function createCustomerInDatabase(
   db: AppDatabase,
   user: AuthenticatedUser,
   input: CreateCustomerInput,
+  encryptionKey?: string,
 ): Promise<CustomerRecord> {
   const id = crypto.randomUUID();
   const registrationHash = input.registrationNumber
     ? await sha256Base64Url(input.registrationNumber)
     : null;
   const phoneHash = input.phone ? await sha256Base64Url(input.phone) : null;
+  const [registrationNumberEncrypted, phoneEncrypted, emailEncrypted, addressEncrypted] = await Promise.all([
+    input.registrationNumber ? protectSensitiveValue(input.registrationNumber, encryptionKey, maskSensitiveValue) : null,
+    input.phone ? protectSensitiveValue(input.phone, encryptionKey, maskPhone) : null,
+    input.email ? protectSensitiveValue(input.email, encryptionKey, maskEmail) : null,
+    input.address ? protectSensitiveValue(input.address, encryptionKey, maskSensitiveValue) : null,
+  ]);
 
   const result = await db.execute<CustomerRow>(sql`
     INSERT INTO customers (
@@ -134,12 +145,12 @@ async function createCustomerInDatabase(
       ${id},
       ${input.type},
       ${input.displayName.trim()},
-      ${input.registrationNumber ? maskSensitiveValue(input.registrationNumber) : null},
+      ${registrationNumberEncrypted},
       ${registrationHash},
-      ${input.phone ? maskPhone(input.phone) : null},
+      ${phoneEncrypted},
       ${phoneHash},
-      ${input.email ? maskEmail(input.email) : null},
-      null,
+      ${emailEncrypted},
+      ${addressEncrypted},
       ${user.id}
     )
     RETURNING
@@ -154,10 +165,29 @@ async function createCustomerInDatabase(
       null::timestamp AS "lastAssayAt",
       created_at AS "createdAt"
   `);
-  const [record] = readRows(result).map(mapCustomerRow);
+  const [record] = await Promise.all(readRows(result).map((row) => mapCustomerRow(row, encryptionKey)));
 
   if (!record) {
     throw new Error("Failed to create customer.");
+  }
+
+  if (input.type === "legal_entity" && input.organizationProfile) {
+    const profile = input.organizationProfile;
+    const [bankAccountEncrypted, contactPhoneEncrypted] = await Promise.all([
+      profile.bankAccount ? protectSensitiveValue(profile.bankAccount, encryptionKey, maskSensitiveValue) : null,
+      profile.contactPhone ? protectSensitiveValue(profile.contactPhone, encryptionKey, maskPhone) : null,
+    ]);
+    await db.execute(sql`
+      INSERT INTO customer_organization_profiles (
+        customer_id, deposit_name, branch_name, organization_kind, bank_name, bank_account_encrypted,
+        province, district, bag, mine_initial_number, contact_name, contact_phone_encrypted, notes
+      ) VALUES (
+        ${record.id}, ${profile.depositName || null}, ${profile.branchName || null}, ${profile.organizationKind || null},
+        ${profile.bankName || null}, ${bankAccountEncrypted},
+        ${profile.province || null}, ${profile.district || null}, ${profile.bag || null}, ${profile.mineInitialNumber || null},
+        ${profile.contactName || null}, ${contactPhoneEncrypted}, ${profile.notes || null}
+      )
+    `);
   }
 
   return record;
@@ -212,6 +242,26 @@ function normalizeCreateCustomerInput(value: unknown): CreateCustomerInput {
     email: readText(body.email),
     phone: readText(body.phone),
     address: readText(body.address),
+    organizationProfile: body.organizationProfile && typeof body.organizationProfile === "object"
+      ? normalizeOrganizationProfile(body.organizationProfile as Record<string, unknown>)
+      : undefined,
+  };
+}
+
+function normalizeOrganizationProfile(value: Record<string, unknown>) {
+  return {
+    depositName: readText(value.depositName),
+    branchName: readText(value.branchName),
+    organizationKind: readText(value.organizationKind),
+    bankName: readText(value.bankName),
+    bankAccount: readText(value.bankAccount),
+    province: readText(value.province),
+    district: readText(value.district),
+    bag: readText(value.bag),
+    mineInitialNumber: readText(value.mineInitialNumber),
+    contactName: readText(value.contactName),
+    contactPhone: readText(value.contactPhone),
+    notes: readText(value.notes),
   };
 }
 
@@ -225,14 +275,14 @@ function validateCreateCustomerInput(input: CreateCustomerInput): string | null 
   return null;
 }
 
-function mapCustomerRow(row: CustomerRow): CustomerRecord {
+async function mapCustomerRow(row: CustomerRow, encryptionKey?: string): Promise<CustomerRecord> {
   return {
     id: row.id,
     type: row.type,
     displayName: row.displayName,
-    registrationNumberMasked: row.registrationNumberMasked,
-    emailMasked: row.emailMasked,
-    phoneMasked: row.phoneMasked,
+    registrationNumberMasked: await maskStoredValue(row.registrationNumberMasked, encryptionKey, maskSensitiveValue),
+    emailMasked: await maskStoredValue(row.emailMasked, encryptionKey, maskEmail),
+    phoneMasked: await maskStoredValue(row.phoneMasked, encryptionKey, maskPhone),
     totalAssays: Number(row.totalAssays),
     totalGrossWeightGrams: Number(row.totalGrossWeightGrams),
     lastAssayAt: row.lastAssayAt instanceof Date
@@ -240,6 +290,29 @@ function mapCustomerRow(row: CustomerRow): CustomerRecord {
       : row.lastAssayAt,
     createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : row.createdAt,
   };
+}
+
+async function protectSensitiveValue(
+  value: string,
+  encryptionKey: string | undefined,
+  legacyMask: (value: string) => string,
+): Promise<string> {
+  return isValidFieldEncryptionKey(encryptionKey) ? encryptField(value, encryptionKey!) : legacyMask(value);
+}
+
+async function maskStoredValue(
+  storedValue: string | null,
+  encryptionKey: string | undefined,
+  masker: (value: string) => string,
+): Promise<string | null> {
+  if (!storedValue) return null;
+  if (!storedValue.startsWith("v1.")) return storedValue;
+  if (!isValidFieldEncryptionKey(encryptionKey)) return "[secured]";
+  try {
+    return masker(await decryptField(storedValue, encryptionKey!));
+  } catch {
+    return "[secured]";
+  }
 }
 
 function maskSensitiveValue(value: string): string {
