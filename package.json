@@ -20,7 +20,8 @@
     "setup:token": "node scripts/hash-setup-token.mjs",
     "setup:rotate": "node scripts/rotate-setup-token.mjs",
     "setup:verify": "node scripts/verify-setup-token.mjs",
-    "security:field-key": "node scripts/generate-field-encryption-key.mjs"
+    "security:field-key": "node scripts/generate-field-encryption-key.mjs",
+    "cloudflare:env": "node scripts/create-cloudflare-production-env.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
