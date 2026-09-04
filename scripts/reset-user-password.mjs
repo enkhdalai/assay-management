@@ -42,6 +42,13 @@ if (!rows.length) {
   throw new Error("No user was found for that email address.");
 }
 
+await sql.query(
+  `UPDATE user_sessions
+   SET status = 'revoked', revoked_at = now()
+   WHERE user_id = $1 AND status = 'active'`,
+  [rows[0].id],
+);
+
 console.log(`Password reset for ${email}. No password value was logged.`);
 
 function assertAcceptablePassword(value) {
