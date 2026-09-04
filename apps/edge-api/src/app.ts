@@ -86,6 +86,10 @@ edgeApi.onError((error, c) => {
 function classifyOperationalError(error: unknown): string {
   const message = error instanceof Error ? error.message.toLowerCase() : "";
 
+  if (message.startsWith("auth_login_failed:")) {
+    return message.replace("auth_login_failed:", "auth_");
+  }
+
   if (message.includes("cpu") && message.includes("limit")) return "worker_cpu_limit";
   if (message.includes("relation") && message.includes("does not exist")) {
     return "database_schema_missing";

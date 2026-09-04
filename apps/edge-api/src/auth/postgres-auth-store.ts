@@ -438,98 +438,112 @@ export class PostgresAuthStore implements AuthStore {
   }
 
   async login(email: string, password: string): Promise<LoginResult> {
-    const normalizedEmail = email.trim().toLowerCase();
-    const user = await this.findUserByEmail(normalizedEmail);
+    let stage = "user_lookup";
 
-    if (!user) {
-      await this.recordLoginEvent({
-        email: normalizedEmail,
-        outcome: "failed",
-        reason: "unknown_email",
-      });
-      return { ok: false, reason: "invalid_credentials" };
-    }
+    try {
+      const normalizedEmail = email.trim().toLowerCase();
+      const user = await this.findUserByEmail(normalizedEmail);
 
-    if (user.status === "disabled") {
-      await this.recordLoginEvent({
-        userId: user.id,
-        email: user.email,
-        outcome: "failed",
-        reason: "disabled_user",
-      });
-      return { ok: false, reason: "disabled" };
-    }
+      if (!user) {
+        stage = "unknown_user_audit";
+        await this.recordLoginEvent({
+          email: normalizedEmail,
+          outcome: "failed",
+          reason: "unknown_email",
+        });
+        return { ok: false, reason: "invalid_credentials" };
+      }
 
-    if (user.status === "invited") {
-      await this.recordLoginEvent({
-        userId: user.id,
-        email: user.email,
-        outcome: "failed",
-        reason: "invitation_not_accepted",
-      });
-      return { ok: false, reason: "invalid_credentials" };
-    }
+      if (user.status === "disabled") {
+        stage = "disabled_user_audit";
+        await this.recordLoginEvent({
+          userId: user.id,
+          email: user.email,
+          outcome: "failed",
+          reason: "disabled_user",
+        });
+        return { ok: false, reason: "disabled" };
+      }
 
-    if (this.isLocked(user)) {
-      await this.recordLoginEvent({
-        userId: user.id,
-        email: user.email,
-        outcome: "locked",
-        reason: "locked_user",
-      });
-      return { ok: false, reason: "locked" };
-    }
+      if (user.status === "invited") {
+        stage = "invited_user_audit";
+        await this.recordLoginEvent({
+          userId: user.id,
+          email: user.email,
+          outcome: "failed",
+          reason: "invitation_not_accepted",
+        });
+        return { ok: false, reason: "invalid_credentials" };
+      }
 
-    const validPassword =
-      user.passwordHash !== null && (await verifyPassword(password, user.passwordHash));
+      if (this.isLocked(user)) {
+        stage = "locked_user_audit";
+        await this.recordLoginEvent({
+          userId: user.id,
+          email: user.email,
+          outcome: "locked",
+          reason: "locked_user",
+        });
+        return { ok: false, reason: "locked" };
+      }
 
-    if (!validPassword) {
-      const reason = await this.recordFailedLogin(user);
-      await this.recordLoginEvent({
-        userId: user.id,
-        email: user.email,
-        outcome: reason === "locked" ? "locked" : "failed",
-        reason: "invalid_password",
-      });
-      return { ok: false, reason };
-    }
+      stage = "password_verification";
+      const validPassword =
+        user.passwordHash !== null && (await verifyPassword(password, user.passwordHash));
 
-    const token = createSessionToken();
-    const tokenHash = await hashSessionToken(token);
-    const expiresAt = sessionExpiresAt();
+      if (!validPassword) {
+        stage = "failed_password_write";
+        const reason = await this.recordFailedLogin(user);
+        await this.recordLoginEvent({
+          userId: user.id,
+          email: user.email,
+          outcome: reason === "locked" ? "locked" : "failed",
+          reason: "invalid_password",
+        });
+        return { ok: false, reason };
+      }
 
-    await this.db.batch([
-      this.db
-        .update(users)
-        .set({
-          failedLoginCount: 0,
+      stage = "session_token";
+      const token = createSessionToken();
+      const tokenHash = await hashSessionToken(token);
+      const expiresAt = sessionExpiresAt();
+
+      stage = "session_write";
+      await this.db.batch([
+        this.db
+          .update(users)
+          .set({
+            failedLoginCount: 0,
+            status: "active",
+            lockedUntil: null,
+            lastLoginAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(eq(users.id, user.id)),
+
+        this.db.insert(userSessions).values({
+          userId: user.id,
           status: "active",
-          lockedUntil: null,
-          lastLoginAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .where(eq(users.id, user.id)),
+          sessionTokenHash: tokenHash,
+          expiresAt,
+        }),
 
-      this.db.insert(userSessions).values({
-        userId: user.id,
-        status: "active",
-        sessionTokenHash: tokenHash,
+        this.db.insert(loginEvents).values({
+          userId: user.id,
+          email: user.email,
+          outcome: "success",
+        }),
+      ]);
+
+      return {
+        ok: true,
+        token,
         expiresAt,
-      }),
-
-      this.db.insert(loginEvents).values({
-        userId: user.id,
-        email: user.email,
-        outcome: "success",
-      }),
-    ]);
-
-    return {
-      ok: true,
-      token,
-      expiresAt,
-      user: toAuthenticatedUser(user),
-    };
+        user: toAuthenticatedUser(user),
+      };
+    } catch {
+      throw new Error(`auth_login_failed:${stage}`);
+    }
   }
 
   async getUserBySessionToken(token: string | undefined): Promise<AuthenticatedUser | null> {

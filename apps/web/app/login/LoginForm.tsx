@@ -26,7 +26,9 @@ export function LoginForm({ returnTo }: LoginFormProps) {
       const result = await response.json().catch(() => null);
 
       if (!response.ok || !result?.ok) {
-        setError(result?.message ?? "Нэвтрэх үед алдаа гарлаа.");
+        const requestId =
+          typeof result?.requestId === "string" ? ` (Support ID: ${result.requestId})` : "";
+        setError(`${result?.message ?? "Нэвтрэх үед алдаа гарлаа."}${requestId}`);
         return;
       }
 
