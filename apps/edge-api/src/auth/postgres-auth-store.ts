@@ -541,7 +541,16 @@ export class PostgresAuthStore implements AuthStore {
         expiresAt,
         user: toAuthenticatedUser(user),
       };
-    } catch {
+    } catch (error) {
+      if (stage === "password_verification") {
+        // Crypto providers return implementation errors only here. The message
+        // contains no credential material and is required to diagnose a Worker
+        // runtime compatibility failure without logging user data.
+        console.error("Password verification failed", {
+          name: error instanceof Error ? error.name : "UnknownError",
+          message: error instanceof Error ? error.message.slice(0, 240) : "Unknown error",
+        });
+      }
       throw new Error(`auth_login_failed:${stage}`);
     }
   }
