@@ -1,3 +1,5 @@
+import { pbkdf2 } from "node:crypto";
+
 import {
   base64UrlToBytes,
   bytesToBase64Url,
@@ -67,31 +69,17 @@ async function derivePasswordHash(
   salt: string,
   iterations: number,
 ): Promise<string> {
-  const keyMaterial = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(password),
-    "PBKDF2",
-    false,
-    ["deriveBits"],
-  );
+  // Cloudflare's Node compatibility runtime provides PBKDF2 through OpenSSL.
+  // It is compatible with the existing PBKDF2-SHA-256 storage format and avoids
+  // Worker-specific SubtleCrypto failures during password verification.
+  return new Promise((resolve, reject) => {
+    pbkdf2(password, base64UrlToBytes(salt), iterations, KEY_BITS / 8, "sha256", (error, key) => {
+      if (error) {
+        reject(error);
+        return;
+      }
 
-  const bits = await crypto.subtle.deriveBits(
-    {
-      name: "PBKDF2",
-      hash: "SHA-256",
-      salt: toArrayBuffer(base64UrlToBytes(salt)),
-      iterations,
-    },
-    keyMaterial,
-    KEY_BITS,
-  );
-
-  return bytesToBase64Url(new Uint8Array(bits));
-}
-
-function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  return bytes.buffer.slice(
-    bytes.byteOffset,
-    bytes.byteOffset + bytes.byteLength,
-  ) as ArrayBuffer;
+      resolve(bytesToBase64Url(new Uint8Array(key)));
+    });
+  });
 }
