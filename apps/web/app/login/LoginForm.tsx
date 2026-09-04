@@ -28,7 +28,8 @@ export function LoginForm({ returnTo }: LoginFormProps) {
       if (!response.ok || !result?.ok) {
         const requestId =
           typeof result?.requestId === "string" ? ` (Support ID: ${result.requestId})` : "";
-        setError(`${result?.message ?? "Нэвтрэх үед алдаа гарлаа."}${requestId}`);
+        const code = typeof result?.code === "string" ? ` [${result.code}]` : "";
+        setError(`${result?.message ?? "Нэвтрэх үед алдаа гарлаа."}${requestId}${code}`);
         return;
       }
 

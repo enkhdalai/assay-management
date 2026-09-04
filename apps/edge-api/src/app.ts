@@ -73,12 +73,16 @@ edgeApi.onError((error, c) => {
   // Keep operational detail out of responses; sensitive requests can contain
   // financial and personal data. The request ID is safe to share for support.
   const requestId = c.req.header("x-request-id")?.trim() || crypto.randomUUID();
+  const category = classifyOperationalError(error);
   console.error("Assay API request failed", {
     requestId,
     name: error instanceof Error ? error.name : "UnknownError",
-    category: classifyOperationalError(error),
+    category,
   });
-  const response = c.json({ ok: false, message: "Системийн алдаа гарлаа.", requestId }, 500);
+  const response = c.json(
+    { ok: false, message: "Системийн алдаа гарлаа.", requestId, code: category },
+    500,
+  );
   applyApiSecurityHeaders(response.headers, requestId);
   return response;
 });
