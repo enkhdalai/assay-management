@@ -14,6 +14,12 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 const localBindingConfig = {
   main: "./worker/index.ts",
   compatibility_flags: ["nodejs_compat"],
+  // Password verification is intentionally CPU-intensive. A 30-second cap is
+  // conservative for the paid Standard Worker model and prevents Free-tier
+  // 10 ms limits from silently breaking authentication.
+  limits: {
+    cpu_ms: 30_000,
+  },
   d1_databases: d1
     ? [
         {
