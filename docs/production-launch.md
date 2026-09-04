@@ -27,6 +27,19 @@ Configure these production variables. Do not put secret values in source control
 | `AUTH_SETUP_TOKEN_HASH` | Hash of a one-time initial setup token |
 | `AUTH_DEV_LOGIN_ENABLED` | `false` |
 | `RATE_LIMITING_ENABLED` | `true` |
+
+## Resetting an initial password
+
+Cloudflare Workers support PBKDF2 password verification up to 100,000 iterations.
+If an early account was created with a higher count, reset it locally after the
+application update. Do not put the password in a file or shell history:
+
+```bash
+read -s "ASSAY_RESET_PASSWORD?New password: "
+export ASSAY_RESET_PASSWORD
+npm run auth:reset-password -- --email=admin@example.mn
+unset ASSAY_RESET_PASSWORD
+```
 | `BOM_API_CLIENT_ID` | Leave unset until BOM integration is formally approved |
 | `BOM_API_SIGNING_SECRET` | Leave unset until BOM integration is formally approved |
 

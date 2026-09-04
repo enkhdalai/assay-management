@@ -20,6 +20,7 @@
     "setup:token": "node scripts/hash-setup-token.mjs",
     "setup:rotate": "node scripts/rotate-setup-token.mjs",
     "setup:verify": "node scripts/verify-setup-token.mjs",
+    "auth:reset-password": "node scripts/reset-user-password.mjs",
     "security:field-key": "node scripts/generate-field-encryption-key.mjs",
     "cloudflare:env": "node scripts/create-cloudflare-production-env.mjs"
   },

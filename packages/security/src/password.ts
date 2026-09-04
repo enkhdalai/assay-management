@@ -8,7 +8,9 @@ import {
 } from "./encoding";
 
 const ALGORITHM = "pbkdf2_sha256";
-const DEFAULT_ITERATIONS = 310_000;
+// Cloudflare Workers cap PBKDF2 at 100,000 iterations. Keep this at the
+// platform maximum so password hashes can be verified in every deployment.
+const DEFAULT_ITERATIONS = 100_000;
 const SALT_BYTES = 16;
 const KEY_BITS = 256;
 
