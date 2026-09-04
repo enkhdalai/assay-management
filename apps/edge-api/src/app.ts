@@ -72,9 +72,33 @@ edgeApi.notFound((c) => {
 edgeApi.onError((error, c) => {
   // Keep operational detail out of responses; sensitive requests can contain
   // financial and personal data. The request ID is safe to share for support.
-  console.error("Assay API request failed", { name: error.name });
   const requestId = c.req.header("x-request-id")?.trim() || crypto.randomUUID();
+  console.error("Assay API request failed", {
+    requestId,
+    name: error instanceof Error ? error.name : "UnknownError",
+    category: classifyOperationalError(error),
+  });
   const response = c.json({ ok: false, message: "Системийн алдаа гарлаа.", requestId }, 500);
   applyApiSecurityHeaders(response.headers, requestId);
   return response;
 });
+
+function classifyOperationalError(error: unknown): string {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+
+  if (message.includes("cpu") && message.includes("limit")) return "worker_cpu_limit";
+  if (message.includes("relation") && message.includes("does not exist")) {
+    return "database_schema_missing";
+  }
+  if (
+    message.includes("database") ||
+    message.includes("neon") ||
+    message.includes("connect") ||
+    message.includes("fetch failed")
+  ) {
+    return "database_connection_failed";
+  }
+  if (message.includes("pbkdf2") || message.includes("crypto")) return "password_crypto_failed";
+
+  return "unexpected";
+}
