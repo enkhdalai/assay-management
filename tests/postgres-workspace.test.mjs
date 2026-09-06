@@ -49,7 +49,7 @@ test("PostgreSQL routes enforce tenant scope and persist staff and intake audits
   const originalFetch = globalThis.fetch;
   const sqlErrors = [];
   try {
-    for (const migration of ["0000_even_falcon.sql", "0001_flashy_william_stryker.sql", "0002_happy_glorian.sql", "0003_outgoing_gabe_jones.sql", "0004_request_certificates.sql", "0005_annual_certificate_numbers.sql", "0006_batch_registration_numbers.sql", "0007_oval_domino.sql", "0008_customer_assay_center_ownership.sql"]) {
+    for (const migration of ["0000_even_falcon.sql", "0001_flashy_william_stryker.sql", "0002_happy_glorian.sql", "0003_outgoing_gabe_jones.sql", "0004_request_certificates.sql", "0005_annual_certificate_numbers.sql", "0006_batch_registration_numbers.sql", "0007_oval_domino.sql", "0008_customer_assay_center_ownership.sql", "0009_bullion_examination_approval.sql", "0010_integration_publications.sql"]) {
       await database.exec(await readFile(new URL(`../packages/db/drizzle/${migration}`, import.meta.url), "utf8"));
     }
     // Emulate Neon's HTTP wire format against a disposable PostgreSQL engine.

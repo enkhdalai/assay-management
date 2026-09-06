@@ -64,6 +64,20 @@
       "when": 1788708572620,
       "tag": "0008_customer_assay_center_ownership",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1788711500417,
+      "tag": "0009_bullion_examination_approval",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788732000000,
+      "tag": "0010_integration_publications",
+      "breakpoints": true
     }
   ]
 }

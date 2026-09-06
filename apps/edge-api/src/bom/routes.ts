@@ -16,6 +16,7 @@ import { getTrustedClientIp } from "../security/middleware";
 const MAX_SIGNATURE_AGE_MS = 5 * 60 * 1000;
 const BOM_READ_SCOPE = "bom:assays:read";
 const BOM_CONFIRM_SCOPE = "bom:confirmations:write";
+const BOM_BULLION_CERTIFICATE_SCOPE = "bom:bullion-certificates:read";
 
 export const bomRoutes = new Hono<{ Bindings: EdgeApiEnv }>();
 
@@ -84,6 +85,45 @@ bomRoutes.post("/assays/:publicId/confirmations", async (c) => {
     return c.json({ ok: true, data: confirmation, requestId: auth.requestId }, 201);
   } catch {
     await logBomApiRequest(db, auth, 500, "Unable to record confirmation.");
+    return c.json({ ok: false, message: "Системийн алдаа гарлаа.", requestId: auth.requestId }, 500);
+  }
+});
+
+/**
+ * Read model for Bank of Mongolia. It intentionally reads the immutable
+ * integration schema rather than operational intake and examination tables.
+ */
+bomRoutes.get("/bullion-certificates", async (c) => {
+  const auth = await authorizeBomRequest(c.req.raw, c.env, BOM_BULLION_CERTIFICATE_SCOPE);
+  if (auth instanceof Response) return auth;
+
+  const filters = normalizeBullionCertificateFilters(c.req.query());
+  if (!filters) return c.json({ ok: false, message: "Хайлтын параметр буруу байна.", requestId: auth.requestId }, 400);
+  const db = createDatabase(c.env.DATABASE_URL!);
+  try {
+    const records = await listPublishedBullionCertificates(db, filters);
+    await logBomApiRequest(db, auth, 200);
+    return c.json({ ok: true, data: { records, limit: filters.limit }, requestId: auth.requestId });
+  } catch {
+    await logBomApiRequest(db, auth, 500, "Unable to retrieve published bullion certificates.");
+    return c.json({ ok: false, message: "Системийн алдаа гарлаа.", requestId: auth.requestId }, 500);
+  }
+});
+
+bomRoutes.get("/bullion-certificates/:certificateId", async (c) => {
+  const auth = await authorizeBomRequest(c.req.raw, c.env, BOM_BULLION_CERTIFICATE_SCOPE);
+  if (auth instanceof Response) return auth;
+  const certificateId = c.req.param("certificateId");
+  if (!isUuid(certificateId)) return c.json({ ok: false, message: "Гэрчилгээний дугаар буруу байна.", requestId: auth.requestId }, 400);
+
+  const db = createDatabase(c.env.DATABASE_URL!);
+  try {
+    const record = await findPublishedBullionCertificate(db, certificateId);
+    await logBomApiRequest(db, auth, record ? 200 : 404);
+    if (!record) return c.json({ ok: false, message: "Баталгаажсан гэрчилгээ олдсонгүй.", requestId: auth.requestId }, 404);
+    return c.json({ ok: true, data: record, requestId: auth.requestId });
+  } catch {
+    await logBomApiRequest(db, auth, 500, "Unable to retrieve published bullion certificate.");
     return c.json({ ok: false, message: "Системийн алдаа гарлаа.", requestId: auth.requestId }, 500);
   }
 });
@@ -186,6 +226,52 @@ async function findApiClient(db: AppDatabase, clientId: string): Promise<ApiClie
     LIMIT 1
   `));
   return row ?? null;
+}
+
+function normalizeBullionCertificateFilters(query: Record<string, string | undefined>): BomBullionCertificateFilters | null {
+  const from = query.from?.trim() || null;
+  const to = query.to?.trim() || null;
+  const assayCenterCode = query.assayCenterCode?.trim() || null;
+  const certificateNo = query.certificateNo?.trim() || null;
+  const registrationNo = query.registrationNo?.trim() || null;
+  const limit = query.limit === undefined ? 100 : Number(query.limit);
+  if ((from && !isIsoDate(from)) || (to && !isIsoDate(to)) || (from && to && from > to)
+    || (assayCenterCode && !isSafeHeaderValue(assayCenterCode, 1, 80))
+    || (certificateNo && !isSafeHeaderValue(certificateNo, 1, 80))
+    || (registrationNo && !isSafeHeaderValue(registrationNo, 1, 80))
+    || !Number.isInteger(limit) || limit < 1 || limit > 250) return null;
+  return { from, to, assayCenterCode, certificateNo, registrationNo, limit };
+}
+
+async function listPublishedBullionCertificates(db: AppDatabase, filters: BomBullionCertificateFilters): Promise<BomBullionCertificateRecord[]> {
+  const result = await db.execute<BomBullionCertificateRow>(sql`
+    SELECT publication.certificate_id AS "certificateId", publication.certificate_no AS "certificateNo",
+      publication.approved_at AS "approvedAt", publication.published_at AS "publishedAt",
+      publication.payload, publication.payload_hash AS "payloadHash"
+    FROM integration.bom_certificate_publications publication
+    INNER JOIN organizations center ON center.id = publication.assay_center_id
+    WHERE publication.status = 'active'
+      AND (${filters.from}::date IS NULL OR publication.approved_at >= ${filters.from}::date)
+      AND (${filters.to}::date IS NULL OR publication.approved_at < (${filters.to}::date + interval '1 day'))
+      AND (${filters.assayCenterCode}::text IS NULL OR center.code = ${filters.assayCenterCode})
+      AND (${filters.certificateNo}::text IS NULL OR publication.certificate_no = ${filters.certificateNo})
+      AND (${filters.registrationNo}::text IS NULL OR publication.payload ->> 'registrationNo' = ${filters.registrationNo})
+    ORDER BY publication.approved_at DESC, publication.certificate_id DESC
+    LIMIT ${filters.limit}
+  `);
+  return readRows(result).map(mapBomBullionCertificateRow);
+}
+
+async function findPublishedBullionCertificate(db: AppDatabase, certificateId: string): Promise<BomBullionCertificateRecord | null> {
+  const result = await db.execute<BomBullionCertificateRow>(sql`
+    SELECT certificate_id AS "certificateId", certificate_no AS "certificateNo", approved_at AS "approvedAt",
+      published_at AS "publishedAt", payload, payload_hash AS "payloadHash"
+    FROM integration.bom_certificate_publications
+    WHERE certificate_id = ${certificateId}::uuid AND status = 'active'
+    LIMIT 1
+  `);
+  const row = readRows(result)[0];
+  return row ? mapBomBullionCertificateRow(row) : null;
 }
 
 async function listApprovedAssays(db: AppDatabase): Promise<BomAssayRecord[]> {
@@ -428,6 +514,18 @@ function mapBomAssayRow(row: BomAssayRow): BomAssayRecord {
   };
 }
 
+function mapBomBullionCertificateRow(row: BomBullionCertificateRow): BomBullionCertificateRecord {
+  const payload = typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload;
+  return {
+    certificateId: row.certificateId,
+    certificateNo: row.certificateNo,
+    approvedAt: toIsoTimestamp(row.approvedAt),
+    publishedAt: toIsoTimestamp(row.publishedAt),
+    payloadHash: row.payloadHash,
+    ...payload,
+  };
+}
+
 function bomError(status: 400 | 401 | 403 | 503, message: string): Response {
   return Response.json({ ok: false, message }, { status });
 }
@@ -435,6 +533,18 @@ function bomError(status: 400 | 401 | 403 | 503, message: string): Response {
 function isFreshTimestamp(value: string): boolean {
   const timestamp = Number(value);
   return Number.isFinite(timestamp) && Math.abs(Date.now() - timestamp) <= MAX_SIGNATURE_AGE_MS;
+}
+
+function isIsoDate(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function toIsoTimestamp(value: string | Date): string {
+  return value instanceof Date ? value.toISOString() : value;
 }
 
 function isSafeHeaderValue(value: string, minimumLength: number, maximumLength: number): boolean {
@@ -507,6 +617,29 @@ type BomAssayRow = {
   instrumentName: string | null;
   approvedAt: string | Date;
   allocations: BomAllocation[];
+};
+type BomBullionCertificateFilters = {
+  from: string | null;
+  to: string | null;
+  assayCenterCode: string | null;
+  certificateNo: string | null;
+  registrationNo: string | null;
+  limit: number;
+};
+type BomBullionCertificateRow = {
+  certificateId: string;
+  certificateNo: string;
+  approvedAt: string | Date;
+  publishedAt: string | Date;
+  payload: Record<string, unknown> | string;
+  payloadHash: string;
+};
+type BomBullionCertificateRecord = Record<string, unknown> & {
+  certificateId: string;
+  certificateNo: string;
+  approvedAt: string;
+  publishedAt: string;
+  payloadHash: string;
 };
 type BomAllocation = { bankName: string; allocatedGrossWeightGrams: number };
 type BomAssayRecord = Omit<BomAssayRow, "grossWeightGrams" | "purityPercent" | "fineWeightGrams" | "approvedAt"> & {

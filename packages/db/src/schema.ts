@@ -430,6 +430,7 @@ export const bullionExaminationRevisions = pgTable(
     revisionNo: integer("revision_no").notNull(),
     examinationNo: varchar("examination_no", { length: 80 }).notNull(),
     enteredByUserId: uuid("entered_by_user_id").references(() => users.id, { onDelete: "restrict" }).notNull(),
+    approvedByUserId: uuid("approved_by_user_id").references(() => users.id, { onDelete: "restrict" }),
     status: assayResultStatus("status").default("draft").notNull(),
     delta: numeric("delta", { precision: 14, scale: 6 }).default("0").notNull(),
     sampleWeightGrams: numeric("sample_weight_grams", { precision: 14, scale: 4 }).notNull(),
@@ -440,6 +441,7 @@ export const bullionExaminationRevisions = pgTable(
     reexaminationRequested: boolean("reexamination_requested").default(false).notNull(),
     notes: text("notes"),
     submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [

@@ -17,6 +17,7 @@ import { isCenterManager } from "../../../../packages/shared/src/workspace-acces
 import type { AnonymousSample } from "../../../../packages/shared/src/bullion-types";
 import { calculateBullion, BULLION_CALCULATION_VERSION } from "../../../../packages/shared/src/bullion-calculation";
 import { requestCertificate } from "./certificates";
+import { bomPublicationStatement } from "../bom/publications";
 
 export const bullionRoutes = new Hono<{ Bindings: EdgeApiEnv }>();
 
@@ -82,6 +83,54 @@ bullionRoutes.get("/samples", async (c) => {
   if (!EXAMINATION_ROLES.has(user.role)) return c.json({ ok: false }, 403);
   const samples = await listSamples(c.env, user);
   return c.json({ ok: true, data: user.role === "chemist" ? samples.filter((sample) => sample.status !== "approved") : samples });
+});
+
+bullionRoutes.post("/samples/:id/approve", async (c) => {
+  const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
+  if (!user) return c.json({ ok: false }, 401);
+  if (!isCenterManager(user.role)) return c.json({ ok: false, message: "Шинжилгээ баталгаажуулах эрхгүй байна." }, 403);
+  const id = c.req.param("id");
+  if (!isUuid(id)) return c.json({ ok: false }, 400);
+  if (!c.env.DATABASE_URL) return c.json({ ok: false, message: "Баталгаажуулахад өгөгдлийн сан шаардлагатай." }, 503);
+
+  const db = createDatabase(c.env.DATABASE_URL);
+  const now = new Date();
+  const auditId = crypto.randomUUID();
+  const entryHash = await sha256Base64Url(JSON.stringify({ auditId, itemId: id, actor: user.id, action: "bullion_examination.approved", now }));
+  const result = await db.batch([
+    db.execute(sql`SELECT pg_advisory_xact_lock(741206825)`),
+    db.execute<{ id: string }>(sql`
+      WITH target AS MATERIALIZED (
+        SELECT e.id
+        FROM bullion_intake_items i
+        JOIN bullion_intake_batches b ON b.id = i.batch_id
+        JOIN LATERAL (
+          SELECT * FROM bullion_examination_revisions
+          WHERE bullion_item_id = i.id ORDER BY revision_no DESC LIMIT 1
+        ) e ON true
+        WHERE i.id = ${id}::uuid
+          AND b.assay_center_id = ${user.organizationId}::uuid
+          AND e.status = 'submitted'
+          AND e.entered_by_user_id <> ${user.id}::uuid
+        FOR UPDATE OF e
+      ), approved AS (
+        UPDATE bullion_examination_revisions
+        SET status = 'approved', approved_by_user_id = ${user.id}::uuid, approved_at = ${now}
+        WHERE id IN (SELECT id FROM target)
+        RETURNING id
+      ), audit AS (
+        INSERT INTO audit_logs (id, actor_user_id, actor_organization_id, action, entity_type, entity_id, reason, entry_hash)
+        SELECT ${auditId}::uuid, ${user.id}::uuid, ${user.organizationId}::uuid,
+          'bullion_examination.approved', 'bullion_examination_revisions', id,
+          'Laboratory director approved bullion examination', ${entryHash}
+        FROM approved
+      )
+      SELECT id FROM approved
+    `),
+    db.execute(bomPublicationStatement(id)),
+  ]);
+  if (!readRows(result[1]).length) return c.json({ ok: false, message: "Шинжилгээ баталгаажуулах боломжгүй байна." }, 409);
+  return c.json({ ok: true });
 });
 
 bullionRoutes.get("/samples/:id/print-chemists", async (c) => {

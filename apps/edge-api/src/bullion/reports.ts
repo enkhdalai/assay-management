@@ -91,7 +91,7 @@ reportRoutes.get("/", async (c) => {
   if (!user) return c.json({ ok: false }, 401);
   if (!isCenterManager(user.role)) return c.json({ ok: false }, 403);
   const from = c.req.query("from") || "2000-01-01";
-  const to = c.req.query("to") || new Date().toISOString().slice(0, 10);
+  const to = c.req.query("to") || ulaanbaatarIsoDate();
   if (![from, to].every((date) => /^\d{4}-\d{2}-\d{2}$/.test(date) && Number.isFinite(Date.parse(date))
     && new Date(date).toISOString().slice(0, 10) === date) || from > to) return c.json({ ok: false }, 400);
   if (!c.env.DATABASE_URL) {
@@ -113,3 +113,11 @@ reportRoutes.get("/", async (c) => {
   `);
   return c.json({ ok: true, data: Array.isArray(result) ? result : result.rows });
 });
+
+function ulaanbaatarIsoDate(): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ulaanbaatar", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date());
+  const part = (type: string) => parts.find((item) => item.type === type)?.value;
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}

@@ -181,6 +181,11 @@ function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded 
     try { await api(`/api/v1/bullion/samples/${sample.id}/substitute`, { method: "POST", body: JSON.stringify({ chemistId }) }); onSaved(); }
     catch (error) { setSubstituteChemist(""); setError((error as Error).message); } finally { setSaving(false); }
   }
+  async function approve() {
+    setSaving(true); setError("");
+    try { await api(`/api/v1/bullion/samples/${sample.id}/approve`, { method: "POST", body: JSON.stringify({}) }); onSaved(); }
+    catch (error) { setError((error as Error).message); } finally { setSaving(false); }
+  }
   const measurements = ["Чек мөнгө", "Дээжийн үлдэгдэл жин", "Шинжилгээний хорогдол", "Королько, корточка"];
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setError("");
@@ -267,7 +272,7 @@ function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded 
       </fieldset>
       <div className="examination-actions">
         {!manager && sample.substitutedByName && sample.substitutedAt && <span className="substitute-notice">Шилжүүлсэн химич: <strong>{sample.substitutedByName}</strong> · <time dateTime={sample.substitutedAt}>{workflowDate(sample.substitutedAt)}</time></span>}
-        {manager ? (submitted && <button className="primary-button" type="button" disabled title="Тоон гарын үсгийн үйлчилгээ хараахан холбогдоогүй">Тоон гарын үсгээр баталгаажуулах</button>) : <>
+        {manager ? (sample.status === "submitted" && <button className="primary-button" type="button" disabled={saving} onClick={() => void approve()}>Баталгаажуулах</button>) : <>
         <button className="secondary-button" type="button" disabled={saving || !editable || !canCalculate} onClick={checkCalculation}>Бодолт</button>
         <button className="secondary-button" type="button" disabled={saving || !editable || !canCalculate} onClick={checkCalculation}>Шалгах</button>
         <button className="primary-button" type="submit" value="draft" disabled={saving || !editable}>Хадгалах</button>
