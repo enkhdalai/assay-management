@@ -6,6 +6,7 @@ export type BullionWeightEntry = {
   receivedWeightGrams: number;
   calculation: BullionCalculation;
   outputWeightGrams: number;
+  goldAssay?: number;
 };
 
 export type BullionMeasurementEntry = {
@@ -34,13 +35,16 @@ export type CreateBullionIntakeInput = {
   dispatchReference?: string;
   initialBullionNumber?: string;
   delta?: number;
-  status?: "draft" | "sample_taken";
+  status?: "draft" | "ready_for_sampling" | "sample_taken";
   items: BullionIntakeItemInput[];
 };
 
 export type BullionIntakeItemRecord = BullionIntakeItemInput & {
   id: string;
   sequenceNo: number;
+  assignedChemistId?: string | null;
+  assignedChemistName?: string | null;
+  assignedAt?: string | null;
 };
 
 export type BullionIntakeBatchRecord = Omit<CreateBullionIntakeInput, "items"> & {
@@ -54,6 +58,8 @@ export type BullionIntakeBatchRecord = Omit<CreateBullionIntakeInput, "items"> &
 };
 
 export type SubmitBullionExaminationInput = {
+  calculationVersion?: string;
+  expectedRevision?: number;
   bullionItemId: string;
   examinationNo: string;
   sampleWeightGrams: number;
@@ -65,4 +71,26 @@ export type SubmitBullionExaminationInput = {
   silverResult?: number;
   reexaminationRequested?: boolean;
   notes?: string;
+};
+
+export type AnonymousSample = {
+  batchId?: string;
+  assignedChemistId?: string | null;
+  assignedChemistName?: string | null;
+  assignedAt?: string | null;
+  completedAt?: string | null;
+  id: string;
+  analysisNo: string;
+  metal: MetalType;
+  receivedAt: string;
+  sampleWeightMilligrams: number;
+  delta: number;
+  revisionNo: number;
+  status: string;
+  examination: SubmitBullionExaminationInput | null;
+};
+export type CertificateEntry = {
+  analysisNo: string; bullionNo: string; bullionWeightGrams: number; origin: string | null;
+  sampleWeightMilligrams: number; remainingMilligrams: number; returnedMilligrams: number;
+  lossMilligrams: number; goldResult: number; silverResult: number; chemistName: string;
 };

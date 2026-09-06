@@ -336,7 +336,7 @@ h2 {
 }
 
 .summary-panel:focus-visible {
-  outline: 3px solid rgba(37, 99, 235, 0.24);
+  outline: 2px solid #6b7280;
   outline-offset: 2px;
 }
 
@@ -537,7 +537,7 @@ h2 {
 }
 
 .status-action:focus-visible {
-  outline: 3px solid rgba(37, 99, 235, 0.24);
+  outline: 2px solid #6b7280;
   outline-offset: 2px;
 }
 
@@ -621,6 +621,21 @@ h2 {
 .customer-table .table-row {
   grid-template-columns: minmax(180px, 1fr) 120px 130px minmax(170px, 0.8fr) 80px 110px 150px;
 }
+
+.customer-record-row { cursor: pointer; }
+
+.customer-record-row:hover,
+.customer-record-row:focus-visible { background: #f4f8ff; outline: 2px solid #7ea6df; outline-offset: -2px; }
+
+.customer-detail-modal { max-width: 1040px; }
+
+.customer-detail-grid { display: grid; gap: 1px; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--line); }
+
+.customer-detail-grid > div { min-height: 82px; padding: 13px; background: #ffffff; }
+
+.customer-detail-grid dt { color: var(--muted); font-size: 13px; margin-bottom: 7px; }
+
+.customer-detail-grid dd { color: #1f2937; margin: 0; overflow-wrap: anywhere; }
 
 .audit-table .table-row {
   align-items: flex-start;
@@ -1098,9 +1113,8 @@ h2 {
 
 .login-form input:focus,
 .login-form select:focus {
-  border-color: var(--blue);
-  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.14);
-  outline: 0;
+  border-color: #9ca3af;
+  box-shadow: none;
 }
 
 .login-error {
@@ -1267,9 +1281,19 @@ h2 {
 .assay-form input:focus,
 .assay-form select:focus,
 .assay-form textarea:focus {
-  border-color: var(--blue);
-  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.14);
-  outline: 0;
+  border-color: #9ca3af;
+  box-shadow: none;
+}
+
+/* Keep keyboard focus visible without the browser's blue focus ring. */
+:is(button, input, select, textarea, a, [tabindex], [contenteditable]):focus {
+  outline: none;
+  box-shadow: none;
+}
+
+:is(button, input, select, textarea, a, [tabindex], [contenteditable]):focus-visible {
+  outline: 2px solid #6b7280;
+  outline-offset: 2px;
 }
 
 .bullion-panel,
@@ -1501,6 +1525,8 @@ h2 {
   .login-shell {
     grid-template-columns: 1fr;
   }
+
+  .customer-detail-grid { grid-template-columns: 1fr; }
 
   .login-shell {
     padding: 18px;

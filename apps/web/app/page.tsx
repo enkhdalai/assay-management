@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { DashboardClient } from "./DashboardClient";
+import { OperationalWorkspace } from "./OperationalWorkspace";
 
 export const metadata: Metadata = {
   title: "Сорьцын төвийн удирдлага",
@@ -9,5 +9,5 @@ export const metadata: Metadata = {
 };
 
 export default function Home() {
-  return <DashboardClient />;
+  return <OperationalWorkspace />;
 }

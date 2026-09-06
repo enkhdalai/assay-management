@@ -101,6 +101,7 @@ async function inviteAndAcceptUser(worker, adminCookie, user) {
         email: user.email,
         role: user.role,
         expiresInDays: 7,
+        organizationId: user.organizationId,
       }),
     }),
     createTestEnv(),
@@ -234,11 +235,9 @@ test("logs in and server-renders the protected dashboard", async () => {
   assert.equal(dashboardResponse.status, 200);
   const html = await dashboardResponse.text();
   assert.match(html, /Сорьцын төвийн удирдлага/);
-  assert.match(html, /Сорьцын бүртгэл/);
+  assert.match(html, /Өгөгдөл ачаалж байна/);
   assert.doesNotMatch(html, /Монголбанк API/);
-  assert.match(html, /Аудит лог/);
-  assert.match(html, /Шинэ сорьц бүртгэх/);
-  assert.match(html, /Ерөнхий тайлан/);
+  assert.doesNotMatch(html, /Аудит лог|Банк хуваарилалт|Арилжааны банкууд/);
   assert.doesNotMatch(html, /Шүүлтүүр/);
   assert.doesNotMatch(html, /AC-260820-014/);
   assert.doesNotMatch(html, /Your site is taking shape|react-loading-skeleton/);
@@ -567,7 +566,7 @@ test("allows super admin to list managed users", async () => {
   assert.equal(body.data[0].email, seedEmail);
 });
 
-test("blocks non-super admins from user management", async () => {
+test("blocks chemists from user management", async () => {
   const worker = await loadWorker();
   const adminCookie = await login(worker);
   const invitationResponse = await worker.fetch(
@@ -612,10 +611,10 @@ test("blocks non-super admins from user management", async () => {
   );
 
   assert.equal(response.status, 403);
-  assert.match((await response.json()).message, /Хэрэглэгч удирдах эрхгүй/);
+  assert.match((await response.json()).message, /хандах эрхгүй/);
 });
 
-test("server-renders protected user invitation page for admins", async () => {
+test("redirects the old invitation page into the staff workspace", async () => {
   const worker = await loadWorker();
   const cookie = await login(worker);
   const response = await worker.fetch(
@@ -629,11 +628,8 @@ test("server-renders protected user invitation page for admins", async () => {
     testContext,
   );
 
-  assert.equal(response.status, 200);
-  const html = await response.text();
-  assert.match(html, /Хэрэглэгч урих/);
-  assert.match(html, /Хяналтын самбар руу буцах/);
-  assert.match(html, /Public signup байхгүй/);
+  assert.equal(response.status, 303);
+  assert.equal(response.headers.get("location"), "http://localhost/?view=staff");
 });
 
 test("protects assay API data from anonymous requests", async () => {

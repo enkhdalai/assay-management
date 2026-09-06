@@ -11,6 +11,16 @@ export type CustomerRecord = {
   totalGrossWeightGrams: number;
   lastAssayAt: string | null;
   createdAt: string;
+  province?: string;
+  district?: string;
+};
+
+export type CustomerDetail = CustomerRecord & {
+  registrationNumber: string | null;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  organizationProfile: OrganizationProfileInput | null;
 };
 
 export type CreateCustomerInput = {
@@ -20,6 +30,8 @@ export type CreateCustomerInput = {
   email?: string;
   phone?: string;
   address?: string;
+  province?: string;
+  district?: string;
   organizationProfile?: OrganizationProfileInput;
 };
 

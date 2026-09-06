@@ -84,6 +84,10 @@ authRoutes.post("/invitations", async (c) => {
 
   const body = await c.req.json().catch(() => null);
 
+  if (!canInviteRole(user, readText(body?.role), readText(body?.organizationId) || user.organizationId)) {
+    return c.json({ ok: false, message: "Зөвхөн өөрийн төвийн химич, хайлагчийг урих эрхтэй." }, 403);
+  }
+
   try {
     const invitation = await store.createInvitation(
       {
@@ -126,3 +130,4 @@ authRoutes.post("/invitations/accept", async (c) => {
 function readText(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
+import { canInviteRole } from "../../../../packages/shared/src/workspace-access";

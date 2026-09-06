@@ -6,6 +6,7 @@ import {
 } from "../apps/edge-api/src/auth/http";
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import { isCenterManager } from "../packages/shared/src/workspace-access";
 
 type Env = EdgeApiEnv & {
   IMAGES: {
@@ -45,6 +46,9 @@ const worker = {
         const loginUrl = new URL("/login", request.url);
         loginUrl.searchParams.set("return_to", `${url.pathname}${url.search}`);
         return Response.redirect(loginUrl, 303);
+      }
+      if (url.pathname === "/users/invite") {
+        return Response.redirect(new URL(isCenterManager(user.role) ? "/?view=staff" : "/", request.url), 303);
       }
     }
 

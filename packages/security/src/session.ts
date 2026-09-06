@@ -8,6 +8,7 @@ export type AuthenticatedUser = {
   id: string;
   organizationId: string;
   organizationName: string;
+  organizationType?: string;
   role: string;
   email: string;
   fullName: string;

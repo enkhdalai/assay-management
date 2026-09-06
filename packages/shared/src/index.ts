@@ -18,6 +18,7 @@ export type {
 } from "./user-types";
 export type {
   CreateCustomerInput,
+  CustomerDetail,
   CustomerRecord,
   CustomerType,
   OrganizationProfileInput,

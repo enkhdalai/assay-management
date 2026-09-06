@@ -374,11 +374,25 @@ export const bullionIntakeBatches = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    uniqueIndex("bullion_intake_batches_public_id_uidx").on(table.publicId),
+    uniqueIndex("bullion_intake_batches_center_public_id_uidx").on(table.assayCenterId, table.publicId),
     index("bullion_intake_batches_customer_received_idx").on(table.customerId, table.receivedAt),
     check("bullion_intake_batches_piece_count_positive", sql`${table.pieceCount} > 0`),
   ],
 );
+
+export const bullionCertificates = pgTable("bullion_certificates", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  batchId: uuid("batch_id").references(() => bullionIntakeBatches.id, { onDelete: "restrict" }).notNull(),
+  assayCenterId: uuid("assay_center_id").references(() => organizations.id, { onDelete: "restrict" }).notNull(),
+  issueYear: integer("issue_year").default(sql`EXTRACT(YEAR FROM CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ulaanbaatar')::integer`).notNull(),
+  sequenceNo: integer("sequence_no").notNull(),
+  entries: jsonb("entries").notNull(),
+  issuedAt: timestamp("issued_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("bullion_certificates_batch_uidx").on(table.batchId),
+  uniqueIndex("bullion_certificates_center_year_sequence_uidx").on(table.assayCenterId, table.issueYear, table.sequenceNo),
+  check("bullion_certificates_sequence_positive", sql`${table.sequenceNo} > 0`),
+]);
 
 export const bullionIntakeItems = pgTable(
   "bullion_intake_items",
@@ -387,15 +401,19 @@ export const bullionIntakeItems = pgTable(
     batchId: uuid("batch_id").references(() => bullionIntakeBatches.id, { onDelete: "cascade" }).notNull(),
     sequenceNo: integer("sequence_no").notNull(),
     analysisNo: varchar("analysis_no", { length: 80 }),
+    examinationNumber: integer("examination_number").generatedAlwaysAsIdentity().notNull(),
     bullionNo: varchar("bullion_no", { length: 80 }).notNull(),
     grossWeightBeforeGrams: numeric("gross_weight_before_grams", { precision: 14, scale: 4 }).notNull(),
     grossWeightAfterGrams: numeric("gross_weight_after_grams", { precision: 14, scale: 4 }),
     slagWeightGrams: numeric("slag_weight_grams", { precision: 14, scale: 4 }),
     sampleWeightMilligrams: numeric("sample_weight_milligrams", { precision: 14, scale: 4 }),
+    assignedChemistId: uuid("assigned_chemist_id").references(() => users.id, { onDelete: "restrict" }),
+    assignedAt: timestamp("assigned_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
     uniqueIndex("bullion_intake_items_batch_sequence_uidx").on(table.batchId, table.sequenceNo),
+    uniqueIndex("bullion_intake_items_examination_number_uidx").on(table.examinationNumber),
     index("bullion_intake_items_bullion_no_idx").on(table.bullionNo),
     check("bullion_intake_items_weight_positive", sql`${table.grossWeightBeforeGrams} > 0`),
   ],

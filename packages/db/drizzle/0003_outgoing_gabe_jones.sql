@@ -1,0 +1,2 @@
+ALTER TABLE "bullion_intake_items" ADD COLUMN "examination_number" integer NOT NULL GENERATED ALWAYS AS IDENTITY (sequence name "bullion_intake_items_examination_number_seq" INCREMENT BY 1 MINVALUE 1 MAXVALUE 2147483647 START WITH 1 CACHE 1);--> statement-breakpoint
+CREATE UNIQUE INDEX "bullion_intake_items_examination_number_uidx" ON "bullion_intake_items" USING btree ("examination_number");

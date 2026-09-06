@@ -1,0 +1,3 @@
+ALTER TABLE "bullion_intake_items" ADD COLUMN "assigned_chemist_id" uuid;--> statement-breakpoint
+ALTER TABLE "bullion_intake_items" ADD COLUMN "assigned_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "bullion_intake_items" ADD CONSTRAINT "bullion_intake_items_assigned_chemist_id_users_id_fk" FOREIGN KEY ("assigned_chemist_id") REFERENCES "public"."users"("id") ON DELETE restrict ON UPDATE no action;

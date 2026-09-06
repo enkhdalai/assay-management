@@ -6,6 +6,7 @@ import {
   SESSION_TTL_SECONDS,
 } from "../../../../packages/security/src";
 import type { AuthenticatedUser } from "../../../../packages/security/src";
+import { isCenterManager } from "../../../../packages/shared/src/workspace-access";
 
 export function setAuthCookie(
   c: Context,
@@ -23,5 +24,5 @@ export function setAuthCookie(
 }
 
 export function canCreateInvitations(user: AuthenticatedUser): boolean {
-  return user.role === "system_admin" || user.role === "assay_admin";
+  return isCenterManager(user.role);
 }

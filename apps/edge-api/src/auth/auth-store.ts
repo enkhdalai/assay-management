@@ -9,6 +9,9 @@ import {
   type AuthenticatedUser,
 } from "../../../../packages/security/src";
 import { PostgresAuthStore } from "./postgres-auth-store";
+import { canInviteRole, canManageStaff, isCenterManager } from "../../../../packages/shared/src/workspace-access";
+import type { ManagedUser } from "../../../../packages/shared/src";
+import type { StaffUpdate } from "./auth-types";
 import type {
   AcceptInvitationInput,
   AuthStore,
@@ -123,6 +126,8 @@ export class InMemoryAuthStore implements AuthStore {
   }
 
   async createInvitation(input: CreateInvitationInput, actor: AuthenticatedUser) {
+    if (!canInviteRole(actor, input.role, input.organizationId)) throw new Error("Invitation permission denied.");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email) || this.usersByEmail.has(input.email.trim().toLowerCase())) throw new Error("Invalid invitation.");
     const token = randomBase64Url(32);
     const invitation: InvitationRecord = {
       id: crypto.randomUUID(),
@@ -159,6 +164,7 @@ export class InMemoryAuthStore implements AuthStore {
     }
 
     const email = invitation.email.trim().toLowerCase();
+    if (this.usersByEmail.has(email)) return { ok: false, reason: "invalid_credentials" };
     const user: AuthUserRecord = {
       id: crypto.randomUUID(),
       organizationId: invitation.organizationId,
@@ -229,6 +235,24 @@ export class InMemoryAuthStore implements AuthStore {
     if (!user || user.status !== "active") return null;
 
     return toAuthenticatedUser(user);
+  }
+
+  async listStaff(actor: AuthenticatedUser): Promise<ManagedUser[]> {
+    if (!isCenterManager(actor.role)) return [];
+    return [...this.usersById.values()]
+      .filter((user) => actor.role === "system_admin" || user.organizationId === actor.organizationId)
+      .map((user) => ({ ...toAuthenticatedUser(user), role: user.role as ManagedUser["role"], status: user.status,
+        organizationType: "private_assay_center", mfaEnabled: false, lastLoginAt: null, createdAt: new Date(0).toISOString() }));
+  }
+
+  async updateStaff(id: string, input: StaffUpdate, actor: AuthenticatedUser): Promise<boolean> {
+    const user = this.usersById.get(id);
+    if (!user || !canManageStaff(actor, user)) return false;
+    Object.assign(user, { fullName: input.fullName, role: input.role, status: input.status, failedLoginCount: 0, lockedUntil: null });
+    for (const session of this.sessionsByHash.values()) {
+      if (session.userId === id) session.revokedAt = new Date();
+    }
+    return true;
   }
 
   async revokeSession(token: string | undefined): Promise<void> {

@@ -8,7 +8,9 @@ import {
 import type {
   CreateCustomerInput,
   CustomerRecord,
+  CustomerDetail,
   CustomerType,
+  OrganizationProfileInput,
 } from "../../../../packages/shared/src";
 import {
   decryptField,
@@ -26,14 +28,46 @@ export const customerRoutes = new Hono<{ Bindings: EdgeApiEnv }>();
 const CUSTOMER_READ_ROLES = new Set([
   "system_admin",
   "assay_admin",
-  "intake_officer",
-  "chemist",
   "lab_manager",
-  "auditor",
 ]);
-const CUSTOMER_WRITE_ROLES = new Set(["system_admin", "assay_admin", "intake_officer"]);
+const CUSTOMER_WRITE_ROLES = new Set(["system_admin", "assay_admin", "lab_manager", "intake_officer"]);
 
 const inMemoryCustomers: CustomerRecord[] = [];
+const customerOwners = new Map<string, string>();
+const initialBullionNumbers = new Map<string, number>();
+export const localCustomerInitialNumber = (id: string) => initialBullionNumbers.get(id) ?? 1;
+
+export function localCustomerForCenter(id: string, user: AuthenticatedUser): CustomerRecord | undefined {
+  return inMemoryCustomers.find((record) => record.id === id
+    && (user.role === "system_admin" || customerOwners.get(id) === user.organizationId));
+}
+
+customerRoutes.get("/lookup", async (c) => {
+  const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
+  if (!user) return c.json({ ok: false }, 401);
+  if (!CUSTOMER_WRITE_ROLES.has(user.role)) return c.json({ ok: false }, 403);
+  const data = c.env.DATABASE_URL
+    ? await Promise.all(readRows(await createDatabase(c.env.DATABASE_URL).execute<CustomerLookupRow>(sql`
+        SELECT c.id, c.display_name AS "displayName", c.type,
+          c.registration_number_encrypted AS "registrationNumber", p.province, p.district,
+          p.deposit_name AS origin
+        FROM customers c
+        JOIN users creator ON creator.id = c.created_by_user_id
+        LEFT JOIN customer_organization_profiles p ON p.customer_id = c.id
+        WHERE (${user.role} = 'system_admin' OR creator.organization_id = ${user.organizationId})
+        ORDER BY c.display_name
+      `)).map(async (customer) => ({
+        ...customer,
+        registrationNumber: await revealStoredValue(customer.registrationNumber, c.env.FIELD_ENCRYPTION_KEY),
+        province: customer.province || null,
+        district: customer.district || null,
+        origin: customer.origin || null,
+      })))
+    : inMemoryCustomers.filter((record) => localCustomerForCenter(record.id, user))
+      .map(({ id, displayName, type, registrationNumberMasked, province, district }) => ({ id, displayName, type,
+        registrationNumber: registrationNumberMasked, province: province || null, district: district || null, origin: null }));
+  return c.json({ ok: true, data });
+});
 
 customerRoutes.get("/", async (c) => {
   const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
@@ -44,9 +78,20 @@ customerRoutes.get("/", async (c) => {
 
   const records = c.env.DATABASE_URL
     ? await listCustomersFromDatabase(createDatabase(c.env.DATABASE_URL), user, c.env.FIELD_ENCRYPTION_KEY)
-    : listCustomersFromMemory();
+    : listCustomersFromMemory().filter((record) => user.role === "system_admin" || customerOwners.get(record.id) === user.organizationId);
 
   return c.json({ ok: true, data: records });
+});
+
+customerRoutes.get("/:id", async (c) => {
+  const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
+  if (!user) return c.json({ ok: false, message: "Нэвтрэх шаардлагатай." }, 401);
+  if (!CUSTOMER_READ_ROLES.has(user.role)) return c.json({ ok: false, message: "Харилцагч харах эрхгүй байна." }, 403);
+  const id = c.req.param("id");
+  if (!isUuid(id)) return c.json({ ok: false }, 400);
+  if (!c.env.DATABASE_URL) return c.json({ ok: false, message: "Харилцагчийн дэлгэрэнгүй мэдээлэлд өгөгдлийн сан шаардлагатай." }, 503);
+  const detail = await getCustomerDetail(createDatabase(c.env.DATABASE_URL), user, id, c.env.FIELD_ENCRYPTION_KEY);
+  return detail ? c.json({ ok: true, data: detail }) : c.json({ ok: false }, 404);
 });
 
 customerRoutes.post("/", async (c) => {
@@ -67,7 +112,68 @@ customerRoutes.post("/", async (c) => {
     ? await createCustomerInDatabase(createDatabase(c.env.DATABASE_URL), user, input, c.env.FIELD_ENCRYPTION_KEY)
     : await createCustomerInMemory(input);
 
+  if (!c.env.DATABASE_URL) {
+    customerOwners.set(record.id, user.organizationId);
+    const initial = input.organizationProfile?.mineInitialNumber ?? "";
+    initialBullionNumbers.set(record.id, /^[0-9]{1,12}$/.test(initial) ? Math.max(1, Number(initial)) : 1);
+  }
+
   return c.json({ ok: true, record }, 201);
+});
+
+customerRoutes.patch("/:id", async (c) => {
+  const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
+  if (!user) return c.json({ ok: false, message: "Нэвтрэх шаардлагатай." }, 401);
+  if (!CUSTOMER_READ_ROLES.has(user.role)) return c.json({ ok: false, message: "Харилцагч засах эрхгүй байна." }, 403);
+  const id = c.req.param("id");
+  if (!isUuid(id)) return c.json({ ok: false }, 400);
+  const input = normalizeCreateCustomerInput(await c.req.json().catch(() => null));
+  const validationMessage = validateCreateCustomerInput(input);
+  if (validationMessage) return c.json({ ok: false, message: validationMessage }, 400);
+  if (!c.env.DATABASE_URL) return c.json({ ok: false, message: "Харилцагч засахад өгөгдлийн сан шаардлагатай." }, 503);
+
+  const db = createDatabase(c.env.DATABASE_URL);
+  const registrationHash = input.registrationNumber ? await sha256Base64Url(input.registrationNumber) : null;
+  const phoneHash = input.phone ? await sha256Base64Url(input.phone) : null;
+  const [registrationNumberEncrypted, phoneEncrypted, emailEncrypted, addressEncrypted] = await Promise.all([
+    input.registrationNumber ? protectSensitiveValue(input.registrationNumber, c.env.FIELD_ENCRYPTION_KEY, maskSensitiveValue) : null,
+    input.phone ? protectSensitiveValue(input.phone, c.env.FIELD_ENCRYPTION_KEY, maskPhone) : null,
+    input.email ? protectSensitiveValue(input.email, c.env.FIELD_ENCRYPTION_KEY, maskEmail) : null,
+    input.address ? protectSensitiveValue(input.address, c.env.FIELD_ENCRYPTION_KEY, maskSensitiveValue) : null,
+  ]);
+  const profile: OrganizationProfileInput = input.organizationProfile ?? { province: input.province, district: input.district };
+  const [bankAccountEncrypted, contactPhoneEncrypted] = await Promise.all([
+    profile.bankAccount ? protectSensitiveValue(profile.bankAccount, c.env.FIELD_ENCRYPTION_KEY, maskSensitiveValue) : null,
+    profile.contactPhone ? protectSensitiveValue(profile.contactPhone, c.env.FIELD_ENCRYPTION_KEY, maskPhone) : null,
+  ]);
+  const updated = readRows(await db.execute<{ id: string }>(sql`
+    UPDATE customers c SET type = ${input.type}, display_name = ${input.displayName},
+      registration_number_encrypted = ${registrationNumberEncrypted}, registration_number_hash = ${registrationHash},
+      phone_encrypted = ${phoneEncrypted}, phone_hash = ${phoneHash}, email_encrypted = ${emailEncrypted},
+      address_encrypted = ${addressEncrypted}, updated_at = now()
+    WHERE c.id = ${id}::uuid AND EXISTS (
+      SELECT 1 FROM users creator WHERE creator.id = c.created_by_user_id
+        AND (${user.role} = 'system_admin' OR creator.organization_id = ${user.organizationId})
+    ) RETURNING c.id
+  `))[0];
+  if (!updated) return c.json({ ok: false }, 404);
+  await db.execute(sql`
+    INSERT INTO customer_organization_profiles (
+      customer_id, deposit_name, branch_name, organization_kind, bank_name, bank_account_encrypted,
+      province, district, bag, mine_initial_number, contact_name, contact_phone_encrypted, notes, updated_at
+    ) VALUES (
+      ${id}::uuid, ${profile.depositName || null}, ${profile.branchName || null}, ${profile.organizationKind || null},
+      ${profile.bankName || null}, ${bankAccountEncrypted}, ${profile.province || null}, ${profile.district || null},
+      ${profile.bag || null}, ${profile.mineInitialNumber || null}, ${profile.contactName || null}, ${contactPhoneEncrypted}, ${profile.notes || null}, now()
+    ) ON CONFLICT (customer_id) DO UPDATE SET
+      deposit_name = EXCLUDED.deposit_name, branch_name = EXCLUDED.branch_name, organization_kind = EXCLUDED.organization_kind,
+      bank_name = EXCLUDED.bank_name, bank_account_encrypted = EXCLUDED.bank_account_encrypted,
+      province = EXCLUDED.province, district = EXCLUDED.district, bag = EXCLUDED.bag,
+      mine_initial_number = EXCLUDED.mine_initial_number, contact_name = EXCLUDED.contact_name,
+      contact_phone_encrypted = EXCLUDED.contact_phone_encrypted, notes = EXCLUDED.notes, updated_at = now()
+  `);
+  const detail = await getCustomerDetail(db, user, id, c.env.FIELD_ENCRYPTION_KEY);
+  return c.json({ ok: true, data: detail });
 });
 
 async function listCustomersFromDatabase(
@@ -84,6 +190,8 @@ async function listCustomersFromDatabase(
       c.id,
       c.type,
       c.display_name AS "displayName",
+      p.province,
+      p.district,
       c.registration_number_encrypted AS "registrationNumberMasked",
       c.email_encrypted AS "emailMasked",
       c.phone_encrypted AS "phoneMasked",
@@ -93,12 +201,15 @@ async function listCustomersFromDatabase(
       c.created_at AS "createdAt"
     FROM customers c
     INNER JOIN users creator ON c.created_by_user_id = creator.id
+    LEFT JOIN customer_organization_profiles p ON p.customer_id = c.id
     LEFT JOIN assay_records ar ON ar.customer_id = c.id
     ${organizationFilter}
     GROUP BY
       c.id,
       c.type,
       c.display_name,
+      p.province,
+      p.district,
       c.registration_number_encrypted,
       c.email_encrypted,
       c.phone_encrypted,
@@ -108,6 +219,46 @@ async function listCustomersFromDatabase(
   `);
 
   return Promise.all(readRows(result).map((row) => mapCustomerRow(row, encryptionKey)));
+}
+
+async function getCustomerDetail(db: AppDatabase, user: AuthenticatedUser, id: string, encryptionKey?: string): Promise<CustomerDetail | null> {
+  const row = readRows(await db.execute<CustomerDetailRow>(sql`
+    SELECT c.id, c.type, c.display_name AS "displayName", c.registration_number_encrypted AS "registrationNumber",
+      c.email_encrypted AS email, c.phone_encrypted AS phone, c.address_encrypted AS address,
+      p.deposit_name AS "depositName", p.branch_name AS "branchName", p.organization_kind AS "organizationKind",
+      p.bank_name AS "bankName", p.bank_account_encrypted AS "bankAccount", p.province, p.district, p.bag,
+      p.mine_initial_number AS "mineInitialNumber", p.contact_name AS "contactName",
+      p.contact_phone_encrypted AS "contactPhone", p.notes,
+      count(ar.id)::int AS "totalAssays", COALESCE(sum(ar.received_gross_weight_grams), 0)::float AS "totalGrossWeightGrams",
+      max(ar.received_at) AS "lastAssayAt", c.created_at AS "createdAt"
+    FROM customers c
+    JOIN users creator ON creator.id = c.created_by_user_id
+    LEFT JOIN customer_organization_profiles p ON p.customer_id = c.id
+    LEFT JOIN assay_records ar ON ar.customer_id = c.id
+    WHERE c.id = ${id}::uuid AND (${user.role} = 'system_admin' OR creator.organization_id = ${user.organizationId})
+    GROUP BY c.id, p.customer_id
+  `))[0];
+  if (!row) return null;
+  const [registrationNumber, email, phone, address, bankAccount, contactPhone] = await Promise.all([
+    revealStoredValue(row.registrationNumber, encryptionKey), revealStoredValue(row.email, encryptionKey),
+    revealStoredValue(row.phone, encryptionKey), revealStoredValue(row.address, encryptionKey),
+    revealStoredValue(row.bankAccount, encryptionKey), revealStoredValue(row.contactPhone, encryptionKey),
+  ]);
+  return {
+    id: row.id, type: row.type, displayName: row.displayName, registrationNumber, email, phone, address,
+    registrationNumberMasked: registrationNumber ? maskSensitiveValue(registrationNumber) : null,
+    emailMasked: email ? maskEmail(email) : null, phoneMasked: phone ? maskPhone(phone) : null,
+    province: row.province || undefined, district: row.district || undefined,
+    totalAssays: Number(row.totalAssays), totalGrossWeightGrams: Number(row.totalGrossWeightGrams),
+    lastAssayAt: row.lastAssayAt instanceof Date ? row.lastAssayAt.toISOString() : row.lastAssayAt,
+    createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : row.createdAt,
+    organizationProfile: {
+      depositName: row.depositName || undefined, branchName: row.branchName || undefined, organizationKind: row.organizationKind || undefined,
+      bankName: row.bankName || undefined, bankAccount: bankAccount || undefined, province: row.province || undefined,
+      district: row.district || undefined, bag: row.bag || undefined, mineInitialNumber: row.mineInitialNumber || undefined,
+      contactName: row.contactName || undefined, contactPhone: contactPhone || undefined, notes: row.notes || undefined,
+    },
+  };
 }
 
 async function createCustomerInDatabase(
@@ -171,8 +322,10 @@ async function createCustomerInDatabase(
     throw new Error("Failed to create customer.");
   }
 
-  if (input.type === "legal_entity" && input.organizationProfile) {
-    const profile = input.organizationProfile;
+  const profile: OrganizationProfileInput | undefined = input.type === "legal_entity"
+    ? input.organizationProfile
+    : input.province || input.district ? { province: input.province, district: input.district } : undefined;
+  if (profile) {
     const [bankAccountEncrypted, contactPhoneEncrypted] = await Promise.all([
       profile.bankAccount ? protectSensitiveValue(profile.bankAccount, encryptionKey, maskSensitiveValue) : null,
       profile.contactPhone ? protectSensitiveValue(profile.contactPhone, encryptionKey, maskPhone) : null,
@@ -190,7 +343,7 @@ async function createCustomerInDatabase(
     `);
   }
 
-  return record;
+  return { ...record, province: profile?.province, district: profile?.district };
 }
 
 function listCustomersFromMemory(): CustomerRecord[] {
@@ -217,6 +370,8 @@ async function createCustomerInMemory(input: CreateCustomerInput): Promise<Custo
     id: crypto.randomUUID(),
     type: input.type,
     displayName: input.displayName.trim(),
+    province: input.type === "individual" ? input.province : input.organizationProfile?.province,
+    district: input.type === "individual" ? input.district : input.organizationProfile?.district,
     registrationNumberMasked: input.registrationNumber
       ? maskSensitiveValue(input.registrationNumber)
       : null,
@@ -242,6 +397,8 @@ function normalizeCreateCustomerInput(value: unknown): CreateCustomerInput {
     email: readText(body.email),
     phone: readText(body.phone),
     address: readText(body.address),
+    province: readText(body.province),
+    district: readText(body.district),
     organizationProfile: body.organizationProfile && typeof body.organizationProfile === "object"
       ? normalizeOrganizationProfile(body.organizationProfile as Record<string, unknown>)
       : undefined,
@@ -266,6 +423,7 @@ function normalizeOrganizationProfile(value: Record<string, unknown>) {
 }
 
 function validateCreateCustomerInput(input: CreateCustomerInput): string | null {
+  if ((input.province?.length ?? 0) > 120 || (input.district?.length ?? 0) > 120) return "Байршлын мэдээлэл 120 тэмдэгтээс хэтрэхгүй байна.";
   if (input.displayName.length < 2) return "Харилцагчийн нэрийг зөв оруулна уу.";
   if (input.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(input.email)) {
     return "Имэйл хаягийг зөв оруулна уу.";
@@ -280,6 +438,8 @@ async function mapCustomerRow(row: CustomerRow, encryptionKey?: string): Promise
     id: row.id,
     type: row.type,
     displayName: row.displayName,
+    province: row.province || undefined,
+    district: row.district || undefined,
     registrationNumberMasked: await maskStoredValue(row.registrationNumberMasked, encryptionKey, maskSensitiveValue),
     emailMasked: await maskStoredValue(row.emailMasked, encryptionKey, maskEmail),
     phoneMasked: await maskStoredValue(row.phoneMasked, encryptionKey, maskPhone),
@@ -315,6 +475,14 @@ async function maskStoredValue(
   }
 }
 
+async function revealStoredValue(storedValue: string | null, encryptionKey?: string): Promise<string | null> {
+  if (!storedValue) return null;
+  if (!storedValue.startsWith("v1.")) return storedValue;
+  if (!isValidFieldEncryptionKey(encryptionKey)) return null;
+  try { return await decryptField(storedValue, encryptionKey!); }
+  catch { return null; }
+}
+
 function maskSensitiveValue(value: string): string {
   const trimmed = value.trim();
   if (trimmed.length <= 4) return "****";
@@ -338,17 +506,59 @@ function readText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 function readRows<T>(result: T[] | { rows: T[] }): T[] {
   return Array.isArray(result) ? result : result.rows;
 }
 
 type CustomerRow = {
+  province?: string | null;
+  district?: string | null;
   id: string;
   type: CustomerType;
   displayName: string;
   registrationNumberMasked: string | null;
   emailMasked: string | null;
   phoneMasked: string | null;
+  totalAssays: number | string;
+  totalGrossWeightGrams: number | string;
+  lastAssayAt: string | Date | null;
+  createdAt: string | Date;
+};
+
+type CustomerLookupRow = {
+  id: string;
+  type: CustomerType;
+  displayName: string;
+  registrationNumber: string | null;
+  province: string | null;
+  district: string | null;
+  origin: string | null;
+};
+
+type CustomerDetailRow = {
+  id: string;
+  type: CustomerType;
+  displayName: string;
+  registrationNumber: string | null;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  depositName: string | null;
+  branchName: string | null;
+  organizationKind: string | null;
+  bankName: string | null;
+  bankAccount: string | null;
+  province: string | null;
+  district: string | null;
+  bag: string | null;
+  mineInitialNumber: string | null;
+  contactName: string | null;
+  contactPhone: string | null;
+  notes: string | null;
   totalAssays: number | string;
   totalGrossWeightGrams: number | string;
   lastAssayAt: string | Date | null;

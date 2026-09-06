@@ -1,4 +1,12 @@
 import type { AuthenticatedUser } from "../../../../packages/security/src";
+import type { ManagedUser } from "../../../../packages/shared/src";
+
+export type StaffUpdate = {
+  fullName: string;
+  role: "chemist" | "intake_officer";
+  status: "active" | "disabled";
+  reason: string;
+};
 
 export type LoginResult =
   | { ok: true; token: string; expiresAt: Date; user: AuthenticatedUser }
@@ -32,6 +40,8 @@ export type AcceptInvitationInput = {
 };
 
 export type AuthStore = {
+  listStaff(actor: AuthenticatedUser): Promise<ManagedUser[]>;
+  updateStaff(id: string, input: StaffUpdate, actor: AuthenticatedUser): Promise<boolean>;
   login(email: string, password: string): Promise<LoginResult>;
   getUserBySessionToken(token: string | undefined): Promise<AuthenticatedUser | null>;
   revokeSession(token: string | undefined): Promise<void>;

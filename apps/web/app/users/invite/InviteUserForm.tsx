@@ -9,7 +9,7 @@ type CreatedInvitation = {
   expiresAt: string;
 };
 
-export function InviteUserForm() {
+export function InviteUserForm({ isSuperAdmin = false, organizationId }: { isSuperAdmin?: boolean; organizationId?: string }) {
   const [error, setError] = useState("");
   const [invitation, setInvitation] = useState<CreatedInvitation | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -33,6 +33,7 @@ export function InviteUserForm() {
           email: form.get("email"),
           role: form.get("role"),
           expiresInDays: Number(form.get("expiresInDays") ?? 7),
+          organizationId,
         }),
       });
       const result = await response.json().catch(() => null);
@@ -59,13 +60,9 @@ export function InviteUserForm() {
       <label>
         <span>Эрх</span>
         <select defaultValue="intake_officer" name="role" required>
-          <option value="assay_admin">Админ</option>
-          <option value="intake_officer">Хүлээн авах ажилтан</option>
+          <option value="intake_officer">Хайлагч</option>
           <option value="chemist">Химич</option>
-          <option value="lab_manager">Лабораторийн эрхлэгч</option>
-          <option value="bom_officer">Монголбанкны хэрэглэгч</option>
-          <option value="commercial_bank_user">Арилжааны банкны хэрэглэгч</option>
-          <option value="auditor">Аудитор</option>
+          {isSuperAdmin ? <option value="lab_manager">Лабораторийн эрхлэгч</option> : null}
         </select>
       </label>
       <label>

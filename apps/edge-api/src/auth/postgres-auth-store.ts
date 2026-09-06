@@ -1,4 +1,7 @@
 import { and, desc, eq, gt, isNull, sql } from "drizzle-orm";
+import { canInviteRole, isCenterManager } from "../../../../packages/shared/src/workspace-access";
+import type { ManagedUser } from "../../../../packages/shared/src";
+import type { StaffUpdate } from "./auth-types";
 
 import {
   auditLogs,
@@ -60,6 +63,47 @@ export class PostgresAuthStore implements AuthStore {
     private readonly setupTokenHash?: string,
   ) {
     this.db = createDatabase(databaseUrl);
+  }
+
+  async listStaff(actor: AuthenticatedUser): Promise<ManagedUser[]> {
+    if (!isCenterManager(actor.role)) return [];
+    const records = await this.db.select({
+      id: users.id, email: users.email, fullName: users.fullName, role: users.role, status: users.status,
+      organizationId: users.organizationId, organizationName: organizations.name, organizationType: organizations.type,
+      mfaEnabled: users.mfaEnabled, lastLoginAt: users.lastLoginAt, createdAt: users.createdAt,
+    }).from(users).innerJoin(organizations, eq(users.organizationId, organizations.id))
+      .where(actor.role === "system_admin" ? undefined : eq(users.organizationId, actor.organizationId))
+      .orderBy(desc(users.createdAt));
+    return records.map((record) => ({ ...record, lastLoginAt: record.lastLoginAt?.toISOString() ?? null, createdAt: record.createdAt.toISOString() }));
+  }
+
+  async updateStaff(id: string, input: StaffUpdate, actor: AuthenticatedUser): Promise<boolean> {
+    if (!isCenterManager(actor.role) || id === actor.id) return false;
+    const eventId = crypto.randomUUID();
+    const hash = await sha256Base64Url(JSON.stringify({ eventId, actorId: actor.id, id, ...input }));
+    // Scope, update, session revocation, and audit are committed together.
+    const result = await this.db.execute<{ id: string }>(sql`
+      WITH target AS MATERIALIZED (
+        SELECT id, full_name, role, status FROM users
+        WHERE id = ${id} AND role IN ('chemist', 'intake_officer')
+          AND (${actor.role} = 'system_admin' OR organization_id = ${actor.organizationId})
+        FOR UPDATE
+      ), changed AS (
+        UPDATE users SET full_name = ${input.fullName}, role = ${input.role}::user_role,
+          status = ${input.status}::user_status, failed_login_count = 0, locked_until = NULL, updated_at = now()
+        WHERE id IN (SELECT id FROM target) RETURNING id, full_name, role, status
+      ), revoked AS (
+        UPDATE user_sessions SET status = 'revoked', revoked_at = now()
+        WHERE user_id IN (SELECT id FROM changed)
+      ), audited AS (
+        INSERT INTO audit_logs (id, actor_user_id, actor_organization_id, action, entity_type, entity_id,
+          old_values, new_values, reason, entry_hash)
+        SELECT ${eventId}, ${actor.id}, ${actor.organizationId}, 'staff.updated', 'users', changed.id,
+          to_jsonb(target), to_jsonb(changed), ${input.reason}, ${hash}
+        FROM changed JOIN target USING (id)
+      ) SELECT id FROM changed
+    `);
+    return readRows(result).length === 1;
   }
 
   async getSetupStatus(): Promise<SetupStatus> {
@@ -564,6 +608,7 @@ export class PostgresAuthStore implements AuthStore {
         id: users.id,
         organizationId: users.organizationId,
         organizationName: organizations.name,
+        organizationType: organizations.type,
         role: users.role,
         status: users.status,
         email: users.email,
@@ -589,6 +634,7 @@ export class PostgresAuthStore implements AuthStore {
       id: row.id,
       organizationId: row.organizationId,
       organizationName: row.organizationName,
+      organizationType: row.organizationType,
       role: row.role,
       email: row.email,
       fullName: row.fullName,
@@ -737,17 +783,7 @@ function assertCanInvite(
   actor: AuthenticatedUser,
   input: CreateInvitationInput,
 ): void {
-  if (actor.role === "system_admin") return;
-
-  if (actor.role === "assay_admin") {
-    const restrictedRoles = new Set(["system_admin", "bom_officer"]);
-    if (
-      input.organizationId === actor.organizationId &&
-      !restrictedRoles.has(input.role)
-    ) {
-      return;
-    }
-  }
+  if (canInviteRole(actor, input.role, input.organizationId)) return;
 
   throw new Error("Invitation permission denied.");
 }
