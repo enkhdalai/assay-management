@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
 
 type LoginFormProps = {
   returnTo: string;
@@ -9,6 +10,7 @@ type LoginFormProps = {
 export function LoginForm({ returnTo }: LoginFormProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -58,14 +60,26 @@ export function LoginForm({ returnTo }: LoginFormProps) {
 
       <label>
         <span>Нууц үг</span>
-        <input
-          autoComplete="current-password"
-          name="password"
-          onChange={(event) => setPassword(event.target.value)}
-          required
-          type="password"
-          value={password}
-        />
+        <span className="password-field">
+          <input
+            autoComplete="current-password"
+            name="password"
+            onChange={(event) => setPassword(event.target.value)}
+            required
+            type={isPasswordVisible ? "text" : "password"}
+            value={password}
+          />
+          <button
+            aria-label={isPasswordVisible ? "Нууц үгийг нуух" : "Нууц үгийг харуулах"}
+            aria-pressed={isPasswordVisible}
+            className="password-visibility-toggle"
+            onClick={() => setIsPasswordVisible((visible) => !visible)}
+            title={isPasswordVisible ? "Нууц үгийг нуух" : "Нууц үгийг харуулах"}
+            type="button"
+          >
+            {isPasswordVisible ? <EyeOff aria-hidden="true" size={20} /> : <Eye aria-hidden="true" size={20} />}
+          </button>
+        </span>
       </label>
 
       {error ? <p className="login-error">{error}</p> : null}
