@@ -36,6 +36,7 @@ test("batch registration migration formats legacy records per assay center", asy
     await db.query("INSERT INTO bullion_intake_batches (id, public_id, assay_center_id, customer_id, received_by_user_id, metal, piece_count, created_at) VALUES ($1, 'BI-OLD-1', $2, $3, $4, 'gold', 1, '2026-01-01'), ($5, 'BI-OLD-2', $2, $3, $4, 'gold', 1, '2026-01-02'), ($6, 'BI-OLD-3', $7, $8, $9, 'gold', 1, '2026-01-01'), ($10, 'BI-OLD-4', $11, $12, $13, 'gold', 1, '2026-01-01')", [batchIds[0], privateCenter, privateCustomer, privateUser, batchIds[1], batchIds[2], publicCenter, publicCustomer, publicUser, batchIds[3], otherPublicCenter, otherPublicCustomer, otherPublicUser]);
     await db.exec(await readFile(new URL("../packages/db/drizzle/0006_batch_registration_numbers.sql", import.meta.url), "utf8"));
     await db.exec(await readFile(new URL("../packages/db/drizzle/0007_oval_domino.sql", import.meta.url), "utf8"));
+    await db.exec(await readFile(new URL("../packages/db/drizzle/0008_customer_assay_center_ownership.sql", import.meta.url), "utf8"));
     const rows = (await db.query("SELECT assay_center_id, public_id FROM bullion_intake_batches ORDER BY created_at, id")).rows;
     assert.deepEqual(rows.filter(row => row.assay_center_id === privateCenter).map(row => row.public_id), ["550001", "550002"]);
     assert.deepEqual(rows.filter(row => row.assay_center_id === publicCenter).map(row => row.public_id), ["0001"]);
@@ -48,7 +49,7 @@ test("PostgreSQL routes enforce tenant scope and persist staff and intake audits
   const originalFetch = globalThis.fetch;
   const sqlErrors = [];
   try {
-    for (const migration of ["0000_even_falcon.sql", "0001_flashy_william_stryker.sql", "0002_happy_glorian.sql", "0003_outgoing_gabe_jones.sql", "0004_request_certificates.sql", "0005_annual_certificate_numbers.sql", "0006_batch_registration_numbers.sql", "0007_oval_domino.sql"]) {
+    for (const migration of ["0000_even_falcon.sql", "0001_flashy_william_stryker.sql", "0002_happy_glorian.sql", "0003_outgoing_gabe_jones.sql", "0004_request_certificates.sql", "0005_annual_certificate_numbers.sql", "0006_batch_registration_numbers.sql", "0007_oval_domino.sql", "0008_customer_assay_center_ownership.sql"]) {
       await database.exec(await readFile(new URL(`../packages/db/drizzle/${migration}`, import.meta.url), "utf8"));
     }
     // Emulate Neon's HTTP wire format against a disposable PostgreSQL engine.

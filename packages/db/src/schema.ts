@@ -311,6 +311,9 @@ export const customers = pgTable(
     phoneHash: varchar("phone_hash", { length: 128 }),
     emailEncrypted: text("email_encrypted"),
     addressEncrypted: text("address_encrypted"),
+    assayCenterId: uuid("assay_center_id")
+      .references(() => organizations.id, { onDelete: "restrict" })
+      .notNull(),
     createdByUserId: uuid("created_by_user_id")
       .references(() => users.id, { onDelete: "restrict" })
       .notNull(),
@@ -326,6 +329,7 @@ export const customers = pgTable(
     index("customers_display_name_idx").on(table.displayName),
     index("customers_registration_hash_idx").on(table.registrationNumberHash),
     index("customers_phone_hash_idx").on(table.phoneHash),
+    index("customers_assay_center_idx").on(table.assayCenterId),
   ],
 );
 

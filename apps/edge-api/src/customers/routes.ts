@@ -52,9 +52,8 @@ customerRoutes.get("/lookup", async (c) => {
           c.registration_number_encrypted AS "registrationNumber", p.province, p.district,
           p.deposit_name AS origin
         FROM customers c
-        JOIN users creator ON creator.id = c.created_by_user_id
         LEFT JOIN customer_organization_profiles p ON p.customer_id = c.id
-        WHERE (${user.role} = 'system_admin' OR creator.organization_id = ${user.organizationId})
+        WHERE (${user.role} = 'system_admin' OR c.assay_center_id = ${user.organizationId})
         ORDER BY c.display_name
       `)).map(async (customer) => ({
         ...customer,
@@ -151,10 +150,9 @@ customerRoutes.patch("/:id", async (c) => {
       registration_number_encrypted = ${registrationNumberEncrypted}, registration_number_hash = ${registrationHash},
       phone_encrypted = ${phoneEncrypted}, phone_hash = ${phoneHash}, email_encrypted = ${emailEncrypted},
       address_encrypted = ${addressEncrypted}, updated_at = now()
-    WHERE c.id = ${id}::uuid AND EXISTS (
-      SELECT 1 FROM users creator WHERE creator.id = c.created_by_user_id
-        AND (${user.role} = 'system_admin' OR creator.organization_id = ${user.organizationId})
-    ) RETURNING c.id
+    WHERE c.id = ${id}::uuid
+      AND (${user.role} = 'system_admin' OR c.assay_center_id = ${user.organizationId})
+    RETURNING c.id
   `))[0];
   if (!updated) return c.json({ ok: false }, 404);
   await db.execute(sql`
@@ -183,7 +181,7 @@ async function listCustomersFromDatabase(
 ): Promise<CustomerRecord[]> {
   const organizationFilter = user.role === "system_admin"
     ? sql``
-    : sql`WHERE creator.organization_id = ${user.organizationId}`;
+    : sql`WHERE c.assay_center_id = ${user.organizationId}`;
 
   const result = await db.execute<CustomerRow>(sql`
     SELECT
@@ -200,7 +198,6 @@ async function listCustomersFromDatabase(
       max(ar.received_at) AS "lastAssayAt",
       c.created_at AS "createdAt"
     FROM customers c
-    INNER JOIN users creator ON c.created_by_user_id = creator.id
     LEFT JOIN customer_organization_profiles p ON p.customer_id = c.id
     LEFT JOIN assay_records ar ON ar.customer_id = c.id
     ${organizationFilter}
@@ -232,10 +229,9 @@ async function getCustomerDetail(db: AppDatabase, user: AuthenticatedUser, id: s
       count(ar.id)::int AS "totalAssays", COALESCE(sum(ar.received_gross_weight_grams), 0)::float AS "totalGrossWeightGrams",
       max(ar.received_at) AS "lastAssayAt", c.created_at AS "createdAt"
     FROM customers c
-    JOIN users creator ON creator.id = c.created_by_user_id
     LEFT JOIN customer_organization_profiles p ON p.customer_id = c.id
     LEFT JOIN assay_records ar ON ar.customer_id = c.id
-    WHERE c.id = ${id}::uuid AND (${user.role} = 'system_admin' OR creator.organization_id = ${user.organizationId})
+    WHERE c.id = ${id}::uuid AND (${user.role} = 'system_admin' OR c.assay_center_id = ${user.organizationId})
     GROUP BY c.id, p.customer_id
   `))[0];
   if (!row) return null;
@@ -290,6 +286,7 @@ async function createCustomerInDatabase(
       phone_hash,
       email_encrypted,
       address_encrypted,
+      assay_center_id,
       created_by_user_id
     )
     VALUES (
@@ -302,6 +299,7 @@ async function createCustomerInDatabase(
       ${phoneHash},
       ${emailEncrypted},
       ${addressEncrypted},
+      ${user.organizationId},
       ${user.id}
     )
     RETURNING

@@ -56,10 +56,9 @@ reportRoutes.get("/summary", async (c) => {
       SELECT count(*) FILTER (WHERE c.type = 'individual')::int AS "individualCustomers",
         count(*) FILTER (WHERE c.type = 'legal_entity')::int AS "companyCustomers"
       FROM customers c
-      JOIN users creator ON creator.id = c.created_by_user_id
       CROSS JOIN scope s
       CROSS JOIN bounds b
-      WHERE (s."allCenters" OR creator.organization_id = s."organizationId")
+      WHERE (s."allCenters" OR c.assay_center_id = s."organizationId")
         AND c.created_at >= (b."startLocal" AT TIME ZONE 'Asia/Ulaanbaatar')
         AND c.created_at < (b."endLocal" AT TIME ZONE 'Asia/Ulaanbaatar')
     ), user_totals AS (

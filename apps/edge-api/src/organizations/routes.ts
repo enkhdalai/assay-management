@@ -41,9 +41,9 @@ organizationRoutes.get("/:id/connections", async (c) => {
     db.execute<OrganizationConnections["customers"][number]>(sql`
       SELECT c.id, c.display_name AS "displayName", c.type,
         count(b.id)::int AS "intakeCount", max(b.received_at)::text AS "lastReceivedAt"
-      FROM customers c JOIN users creator ON creator.id = c.created_by_user_id
+      FROM customers c
       LEFT JOIN bullion_intake_batches b ON b.customer_id = c.id
-      WHERE creator.organization_id = ${id}::uuid
+      WHERE c.assay_center_id = ${id}::uuid
       GROUP BY c.id, c.display_name, c.type
       ORDER BY max(b.received_at) DESC NULLS LAST, c.display_name, c.id
     `),

@@ -307,11 +307,11 @@ async function assignInMemory(batch: BullionIntakeBatchRecord, user: Authenticat
 }
 
 function customerSequenceQuery(customerId: string, user: AuthenticatedUser) {
-  return sql`SELECT c.id, c.display_name AS "displayName", creator.organization_id AS "organizationId", numbering.prefix,
+  return sql`SELECT c.id, c.display_name AS "displayName", c.assay_center_id AS "organizationId", numbering.prefix,
       bullion.value AS "nextSequence", numbering.prefix || lpad(bullion.value::text, GREATEST(4, length(bullion.value::text)), '0') AS "nextNumber",
       numbering.prefix || lpad(registration.value::text, GREATEST(4, length(registration.value::text)), '0') AS "nextRegistrationNumber"
-    FROM customers c JOIN users creator ON creator.id = c.created_by_user_id
-    JOIN organizations o ON o.id = creator.organization_id
+    FROM customers c
+    JOIN organizations o ON o.id = c.assay_center_id
     CROSS JOIN LATERAL (SELECT COALESCE(o.metadata->>'bullionPrefix', CASE WHEN o.type = 'private_assay_center' THEN '55' ELSE '' END) AS prefix) numbering
     CROSS JOIN LATERAL (SELECT COALESCE(max(CASE WHEN i.bullion_no ~ ('^' || numbering.prefix || '[0-9]{4,12}$')
       THEN substring(i.bullion_no FROM length(numbering.prefix) + 1)::bigint END), 0) + 1 AS value
@@ -320,7 +320,7 @@ function customerSequenceQuery(customerId: string, user: AuthenticatedUser) {
     CROSS JOIN LATERAL (SELECT COALESCE(max(CASE WHEN b.public_id ~ ('^' || numbering.prefix || '[0-9]{4,12}$')
       THEN substring(b.public_id FROM length(numbering.prefix) + 1)::bigint END), 0) + 1 AS value
       FROM bullion_intake_batches b WHERE b.assay_center_id = o.id) registration
-    WHERE c.id = ${customerId} AND (${user.role} = 'system_admin' OR creator.organization_id = ${user.organizationId})`;
+    WHERE c.id = ${customerId} AND (${user.role} = 'system_admin' OR c.assay_center_id = ${user.organizationId})`;
 }
 
 function memoryNextNumber(user: AuthenticatedUser): { prefix: string; value: number } {

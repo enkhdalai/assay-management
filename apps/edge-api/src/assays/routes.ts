@@ -306,9 +306,8 @@ async function resolveAssayCustomer(
     const [existing] = readRows(await db.execute<{ id: string; displayName: string }>(sql`
       SELECT c.id, c.display_name AS "displayName"
       FROM customers c
-      INNER JOIN users creator ON creator.id = c.created_by_user_id
       WHERE c.id = ${input.customerId}
-        AND (${user.role === "system_admin"} OR creator.organization_id = ${user.organizationId})
+        AND (${user.role === "system_admin"} OR c.assay_center_id = ${user.organizationId})
       LIMIT 1
     `));
     if (!existing) throw new Error("Selected customer is unavailable.");
@@ -329,12 +328,13 @@ async function resolveAssayCustomer(
     INSERT INTO customers (
       id, type, display_name, registration_number_encrypted,
       registration_number_hash, phone_encrypted, phone_hash, email_encrypted,
-      created_by_user_id
+      assay_center_id, created_by_user_id
     ) VALUES (
       ${id}, ${input.customerType}, ${input.customerName.trim()},
       ${registrationNumberEncrypted},
       ${registrationHash}, ${phoneEncrypted},
       ${phoneHash}, ${emailEncrypted},
+      ${user.organizationId},
       ${user.id}
     )
     RETURNING id, display_name AS "displayName"
@@ -471,9 +471,8 @@ async function validateCustomerSelection(
   const [customer] = readRows(await db.execute<{ id: string }>(sql`
     SELECT c.id
     FROM customers c
-    INNER JOIN users creator ON creator.id = c.created_by_user_id
     WHERE c.id = ${customerId}
-      AND (${user.role === "system_admin"} OR creator.organization_id = ${user.organizationId})
+      AND (${user.role === "system_admin"} OR c.assay_center_id = ${user.organizationId})
     LIMIT 1
   `));
   return customer ? null : "Сонгосон харилцагч ашиглах боломжгүй байна.";
