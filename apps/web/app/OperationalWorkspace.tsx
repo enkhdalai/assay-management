@@ -75,6 +75,13 @@ type DashboardSummary = {
   individualCustomers: number;
   companyCustomers: number;
 };
+type DashboardPeriod = "day" | "month" | "year";
+
+const dashboardPeriods: Record<DashboardPeriod, { heading: string; possessive: string; detail: string }> = {
+  day: { heading: "Өнөөдрийн тойм", possessive: "Өнөөдөр", detail: "Өнөөдрийн" },
+  month: { heading: "Сарын тойм", possessive: "Энэ сар", detail: "Энэ сарын" },
+  year: { heading: "Жилийн тойм", possessive: "Энэ жил", detail: "Энэ жилийн" },
+};
 
 const mass = (grams: number) => grams >= 1000
   ? `${(grams / 1000).toLocaleString(undefined, { maximumFractionDigits: 2 })} кг`
@@ -84,27 +91,29 @@ function DashboardWorkspace() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [period, setPeriod] = useState<DashboardPeriod>("day");
   const refresh = useCallback(() => {
     setLoading(true);
-    return api<{ data: DashboardSummary }>("/api/v1/reports/summary")
+    return api<{ data: DashboardSummary }>(`/api/v1/reports/summary?period=${period}`)
       .then(({ data }) => { setSummary(data); setError(""); })
       .catch((error) => setError(error.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [period]);
   useEffect(() => { void refresh(); }, [refresh]);
+  const copy = dashboardPeriods[period];
   const cards = summary ? [
-    ["Өнөөдөр хүлээн авсан алт", `${summary.goldReceivedToday} гулдмай`, "Өнөөдрийн бүртгэл"],
-    ["Өнөөдөр хүлээн авсан мөнгө", `${summary.silverReceivedToday} гулдмай`, "Өнөөдрийн бүртгэл"],
-    ["Химич дээр", `${summary.withChemistCount} дээж`, "Дуусаагүй шинжилгээ"],
-    ["Өнөөдөр шинжилгээнд", `${summary.todayInExaminationCount} дээж`, "Өнөөдөр хүлээн авснаас"],
-    ["Нийт алт", mass(summary.totalGoldGrams), "Хүлээн авсан жин"],
-    ["Нийт мөнгө", mass(summary.totalSilverGrams), "Хүлээн авсан жин"],
-    ["Хэрэглэгч", `${summary.userCount}`, "Бүртгэлтэй ажилтан"],
-    ["Хувь хүн", `${summary.individualCustomers}`, "Харилцагч"],
-    ["Байгууллага", `${summary.companyCustomers}`, "Харилцагч"],
+    [`${copy.possessive} хүлээн авсан алт`, `${summary.goldReceivedToday} гулдмай`, `${copy.detail} бүртгэл`],
+    [`${copy.possessive} хүлээн авсан мөнгө`, `${summary.silverReceivedToday} гулдмай`, `${copy.detail} бүртгэл`],
+    ["Химич дээр", `${summary.withChemistCount} дээж`, "Одоогийн дуусаагүй шинжилгээ"],
+    [`${copy.possessive} шинжилгээнд`, `${summary.todayInExaminationCount} дээж`, `${copy.detail} хүлээн авснаас`],
+    [`${copy.possessive} алт`, mass(summary.totalGoldGrams), `${copy.detail} хүлээн авсан жин`],
+    [`${copy.possessive} мөнгө`, mass(summary.totalSilverGrams), `${copy.detail} хүлээн авсан жин`],
+    ["Хэрэглэгч", `${summary.userCount}`, `${copy.detail} бүртгүүлсэн ажилтан`],
+    ["Хувь хүн", `${summary.individualCustomers}`, `${copy.detail} бүртгүүлсэн харилцагч`],
+    ["Байгууллага", `${summary.companyCustomers}`, `${copy.detail} бүртгүүлсэн харилцагч`],
   ] as const : [];
   return <section className="workspace-section dashboard-workspace" aria-label="Үйл ажиллагааны тойм">
-    <div className="dashboard-heading"><div><h2>Өнөөдрийн тойм</h2><p>Хүлээн авалт, шинжилгээ болон харилцагчийн нэгдсэн мэдээлэл</p></div><button className="secondary-button" type="button" onClick={() => void refresh()} disabled={loading}>Шинэчлэх</button></div>
+    <div className="dashboard-heading"><div><h2>{copy.heading}</h2><p>Хүлээн авалт, шинжилгээ болон харилцагчийн нэгдсэн мэдээлэл</p></div><div className="dashboard-actions"><select aria-label="Тоймын хугацаа" value={period} disabled={loading} onChange={(event) => setPeriod(event.target.value as DashboardPeriod)}><option value="day">Өнөөдөр</option><option value="month">Энэ сар</option><option value="year">Энэ жил</option></select><button className="secondary-button" type="button" onClick={() => void refresh()} disabled={loading}>Шинэчлэх</button></div></div>
     {error && <p className="login-error" role="alert">{error}</p>}
     {loading ? <WorkspaceLoadingSkeleton variant="cards" /> : <div className="dashboard-summary-grid">{cards.map(([label, value, detail]) => <article className="dashboard-summary-card" key={label}><p>{label}</p><strong>{value}</strong><small>{detail}</small></article>)}</div>}
   </section>;
@@ -135,7 +144,11 @@ function StaffWorkspace({ user }: { user: AuthenticatedUser }) {
   const [organizationId, setOrganizationId] = useState(user.organizationId);
   useEffect(() => {
     if (user.role === "system_admin") void api<{ data: OrganizationRecord[] }>("/api/v1/organizations")
-      .then(({ data }) => setOrganizationRecords(data)).catch(error => setError(error.message));
+      .then(({ data }) => {
+        const assayCenters = data.filter((record) => record.type === "private_assay_center" || record.type === "government_assay_center");
+        setOrganizationRecords(assayCenters);
+        if (assayCenters.length) setOrganizationId((current) => assayCenters.some((record) => record.id === current) ? current : assayCenters[0].id);
+      }).catch(error => setError(error.message));
   }, [user.role]);
   const refresh = useCallback(() => api<{ data: ManagedUser[] }>("/api/v1/users")
     .then(({ data }) => setStaff(data)).catch((error) => setError(error.message)).finally(() => setLoading(false)), []);
@@ -148,16 +161,17 @@ function StaffWorkspace({ user }: { user: AuthenticatedUser }) {
       setEditing(null); await refresh();
     } catch (error) { setError((error as Error).message); } finally { setSaving(false); }
   }
-  const organizations = [...new Map([[user.organizationId, user.organizationName], ...staff.map((person) => [person.organizationId, person.organizationName] as [string, string]), ...organizationRecords.map(record => [record.id, record.name] as [string, string])]).entries()];
+  const organizations = user.role === "system_admin"
+    ? organizationRecords.map((record) => ({ id: record.id, name: record.name }))
+    : [{ id: user.organizationId, name: user.organizationName }];
   return <section className="workspace-section">
     <div className="workspace-toolbar"><input aria-label="Ажилтан хайх" placeholder="Нэр, имэйлээр хайх" value={search} onChange={(event) => setSearch(event.target.value)} /><button className="primary-button" type="button" onClick={() => { setError(""); setInviting(true); }}>Ажилтан урих</button></div>
     {error && <p className="login-error" role="alert">{error}</p>}
     {loading ? <WorkspaceLoadingSkeleton /> : <div className="workspace-table-scroll"><table className="workspace-table"><thead><tr><th>Нэр</th><th>Имэйл</th><th>Эрх</th>{user.role === "system_admin" && <th>Төв</th>}<th>Төлөв</th><th>Үйлдэл</th></tr></thead><tbody>
       {staff.filter((person) => `${person.fullName} ${person.email}`.toLowerCase().includes(search.trim().toLowerCase())).map((person) => <tr key={person.id}><td>{person.fullName}</td><td>{person.email}</td><td>{workspaceRoleLabels[person.role] ?? person.role}</td>{user.role === "system_admin" && <td>{person.organizationName}</td>}<td>{person.status === "active" ? "Идэвхтэй" : person.status === "disabled" ? "Идэвхгүй" : person.status === "locked" ? "Түгжээтэй" : "Уригдсан"}</td><td>{canManageStaff(user, person) && <button className="secondary-button" type="button" onClick={() => { setError(""); setEditing(person); }}>Засах</button>}</td></tr>)}
     </tbody></table></div>}
-    {inviting && <WorkspaceDialog title="Ажилтан урих" onClose={() => setInviting(false)}>
-      {user.role === "system_admin" && <label className="workspace-field">Төв<select value={organizationId} onChange={(event) => setOrganizationId(event.target.value)}>{organizations.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>}
-      <InviteUserForm key={organizationId} isSuperAdmin={user.role === "system_admin"} organizationId={organizationId} />
+    {inviting && <WorkspaceDialog title="Ажилтан урих" size="compact" onClose={() => setInviting(false)}>
+      <InviteUserForm key={organizationId} isSuperAdmin={user.role === "system_admin"} organizationId={organizationId} organizations={organizations} onOrganizationChange={setOrganizationId} />
     </WorkspaceDialog>}
     {editing && <WorkspaceDialog title="Ажилтны мэдээлэл" size="compact" onClose={() => { if (!saving) setEditing(null); }}>
       <form className="login-form" onSubmit={save}><label>Овог, нэр<input name="fullName" minLength={2} maxLength={200} defaultValue={editing.fullName} required /></label>

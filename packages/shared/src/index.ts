@@ -39,3 +39,4 @@ export type {
   BankOrganizationType,
   CreateBankInput,
 } from "./bank-types";
+export type { OrganizationConnections, OrganizationRecord } from "./organization-types";

@@ -42,22 +42,34 @@ export function getMemoryReport(user: AuthenticatedUser, from: string, to: strin
   });
 }
 
-export function getMemoryDashboardSummary(user: AuthenticatedUser) {
+export function getMemoryDashboardSummary(user: AuthenticatedUser, period: "day" | "month" | "year" = "day") {
   const dateParts = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Ulaanbaatar", year: "numeric", month: "2-digit", day: "2-digit",
   }).formatToParts(new Date());
   const part = (type: string) => dateParts.find((item) => item.type === type)?.value || "";
-  const startOfToday = Date.parse(`${part("year")}-${part("month")}-${part("day")}T00:00:00+08:00`);
+  const year = Number(part("year"));
+  const month = Number(part("month"));
+  const day = Number(part("day"));
+  const periodStart = period === "year" ? `${year}-01-01` : period === "month" ? `${year}-${String(month).padStart(2, "0")}-01` : `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  const periodEnd = period === "year" ? `${year + 1}-01-01` : period === "month"
+    ? `${month === 12 ? year + 1 : year}-${String(month === 12 ? 1 : month + 1).padStart(2, "0")}-01`
+    : new Date(Date.UTC(year, month - 1, day + 1)).toISOString().slice(0, 10);
+  const start = Date.parse(`${periodStart}T00:00:00+08:00`);
+  const end = Date.parse(`${periodEnd}T00:00:00+08:00`);
   const items = visibleBatches(user).flatMap((batch) => batch.items.map((item) => ({ batch, item })));
-  const isToday = ({ batch }: typeof items[number]) => Date.parse(batch.receivedAt || batch.createdAt) >= startOfToday;
+  const isInPeriod = ({ batch }: typeof items[number]) => {
+    const receivedAt = Date.parse(batch.receivedAt || batch.createdAt);
+    return receivedAt >= start && receivedAt < end;
+  };
   const isInExamination = ({ item }: typeof items[number]) => !!item.assignedChemistId && memoryExaminations.get(item.id)?.input.status !== "submitted";
+  const periodItems = items.filter(isInPeriod);
   return {
-    goldReceivedToday: items.filter(({ batch }) => batch.metal === "gold").filter(isToday).length,
-    silverReceivedToday: items.filter(({ batch }) => batch.metal === "silver").filter(isToday).length,
+    goldReceivedToday: periodItems.filter(({ batch }) => batch.metal === "gold").length,
+    silverReceivedToday: periodItems.filter(({ batch }) => batch.metal === "silver").length,
     withChemistCount: items.filter(isInExamination).length,
-    todayInExaminationCount: items.filter(isToday).filter(isInExamination).length,
-    totalGoldGrams: items.filter(({ batch }) => batch.metal === "gold").reduce((sum, { item }) => sum + item.grossWeightBeforeGrams, 0),
-    totalSilverGrams: items.filter(({ batch }) => batch.metal === "silver").reduce((sum, { item }) => sum + item.grossWeightBeforeGrams, 0),
+    todayInExaminationCount: periodItems.filter(isInExamination).length,
+    totalGoldGrams: periodItems.filter(({ batch }) => batch.metal === "gold").reduce((sum, { item }) => sum + item.grossWeightBeforeGrams, 0),
+    totalSilverGrams: periodItems.filter(({ batch }) => batch.metal === "silver").reduce((sum, { item }) => sum + item.grossWeightBeforeGrams, 0),
     userCount: 0,
     individualCustomers: 0,
     companyCustomers: 0,

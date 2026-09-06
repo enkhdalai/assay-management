@@ -30,7 +30,6 @@ export type CreateInvitationInput = {
   organizationId: string;
   email: string;
   role: string;
-  expiresInDays?: number;
 };
 
 export type AcceptInvitationInput = {
@@ -49,12 +48,11 @@ export type AuthStore = {
   getSetupStatus(): Promise<SetupStatus>;
   createFirstAdmin(input: CreateFirstAdminInput): Promise<LoginResult>;
   createInvitation(input: CreateInvitationInput, actor: AuthenticatedUser): Promise<{
-    id: string;
-    email: string;
-    role: string;
-    expiresAt: Date;
-    token: string;
-  }>;
+  id: string;
+  email: string;
+  role: string;
+  token: string;
+}>;
   acceptInvitation(input: AcceptInvitationInput): Promise<LoginResult>;
 };
 

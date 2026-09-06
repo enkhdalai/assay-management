@@ -229,7 +229,6 @@ export const userInvitations = pgTable(
     acceptedByUserId: uuid("accepted_by_user_id").references(() => users.id, {
       onDelete: "restrict",
     }),
-    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     acceptedAt: timestamp("accepted_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()

@@ -100,7 +100,6 @@ async function inviteAndAcceptUser(worker, adminCookie, user) {
       body: JSON.stringify({
         email: user.email,
         role: user.role,
-        expiresInDays: 7,
         organizationId: user.organizationId,
       }),
     }),
@@ -514,7 +513,6 @@ test("creates and accepts a user invitation", async () => {
       body: JSON.stringify({
         email: "chemist.test@assay.local",
         role: "chemist",
-        expiresInDays: 7,
       }),
     }),
     createTestEnv(),
@@ -579,7 +577,6 @@ test("blocks chemists from user management", async () => {
       body: JSON.stringify({
         email: "viewer.test@assay.local",
         role: "chemist",
-        expiresInDays: 7,
       }),
     }),
     createTestEnv(),

@@ -1,18 +1,26 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import { Check, Copy } from "lucide-react";
 
 type CreatedInvitation = {
   email: string;
   role: string;
   token: string;
-  expiresAt: string;
 };
 
-export function InviteUserForm({ isSuperAdmin = false, organizationId }: { isSuperAdmin?: boolean; organizationId?: string }) {
+type OrganizationChoice = { id: string; name: string };
+
+export function InviteUserForm({ isSuperAdmin = false, organizationId, organizations = [], onOrganizationChange }: {
+  isSuperAdmin?: boolean;
+  organizationId?: string;
+  organizations?: OrganizationChoice[];
+  onOrganizationChange?(organizationId: string): void;
+}) {
   const [error, setError] = useState("");
   const [invitation, setInvitation] = useState<CreatedInvitation | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [copied, setCopied] = useState(false);
   const inviteUrl = invitation
     ? `${typeof window === "undefined" ? "" : window.location.origin}/invite?token=${invitation.token}`
     : "";
@@ -21,6 +29,7 @@ export function InviteUserForm({ isSuperAdmin = false, organizationId }: { isSup
     event.preventDefault();
     setError("");
     setInvitation(null);
+    setCopied(false);
     setIsSubmitting(true);
 
     const form = new FormData(event.currentTarget);
@@ -32,7 +41,6 @@ export function InviteUserForm({ isSuperAdmin = false, organizationId }: { isSup
         body: JSON.stringify({
           email: form.get("email"),
           role: form.get("role"),
-          expiresInDays: Number(form.get("expiresInDays") ?? 7),
           organizationId,
         }),
       });
@@ -51,24 +59,48 @@ export function InviteUserForm({ isSuperAdmin = false, organizationId }: { isSup
     }
   }
 
+  async function copyInvitationUrl() {
+    try {
+      if (navigator.clipboard) await navigator.clipboard.writeText(inviteUrl);
+      else {
+        const fallback = document.createElement("textarea");
+        fallback.value = inviteUrl;
+        fallback.style.position = "fixed";
+        fallback.style.opacity = "0";
+        document.body.append(fallback);
+        fallback.select();
+        document.execCommand("copy");
+        fallback.remove();
+      }
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError("Урилгын холбоосыг хуулж чадсангүй.");
+    }
+  }
+
   return (
-    <form className="login-form" onSubmit={handleSubmit}>
-      <label>
-        <span>Имэйл</span>
-        <input autoComplete="email" inputMode="email" name="email" required type="email" />
-      </label>
-      <label>
-        <span>Эрх</span>
-        <select defaultValue="intake_officer" name="role" required>
-          <option value="intake_officer">Хайлагч</option>
-          <option value="chemist">Химич</option>
-          {isSuperAdmin ? <option value="lab_manager">Лабораторийн эрхлэгч</option> : null}
-        </select>
-      </label>
-      <label>
-        <span>Хүчинтэй хоног</span>
-        <input defaultValue="7" max="30" min="1" name="expiresInDays" required type="number" />
-      </label>
+    <form className="login-form invite-form" onSubmit={handleSubmit}>
+      <div className="invite-form-grid">
+        {isSuperAdmin && <label className="invite-center-field">
+          <span>Сорьцын төв</span>
+          <select value={organizationId} onChange={(event) => onOrganizationChange?.(event.target.value)} required>
+            {organizations.map((organization) => <option key={organization.id} value={organization.id}>{organization.name}</option>)}
+          </select>
+        </label>}
+        <label className="invite-email-field">
+          <span>Имэйл хаяг</span>
+          <input autoComplete="email" inputMode="email" name="email" placeholder="name@company.mn" required type="email" />
+        </label>
+        <label>
+          <span>Эрх</span>
+          <select defaultValue={isSuperAdmin ? "lab_manager" : "intake_officer"} name="role" required>
+            {isSuperAdmin ? <option value="lab_manager">Лабораторийн эрхлэгч</option> : null}
+            <option value="intake_officer">Хайлагч</option>
+            <option value="chemist">Химич</option>
+          </select>
+        </label>
+      </div>
 
       {error ? <p className="login-error">{error}</p> : null}
 
@@ -76,7 +108,10 @@ export function InviteUserForm({ isSuperAdmin = false, organizationId }: { isSup
         <div className="invite-result">
           <strong>Урилга үүссэн</strong>
           <span>{invitation.email}</span>
-          <code>{inviteUrl}</code>
+          <div className="invite-link-field">
+            <input aria-label="Урилгын холбоос" readOnly value={inviteUrl} />
+            <button className="secondary-button" type="button" title={copied ? "Хуулагдсан" : "Холбоос хуулах"} aria-label={copied ? "Хуулагдсан" : "Холбоос хуулах"} onClick={() => void copyInvitationUrl()}>{copied ? <Check size={18} /> : <Copy size={18} />}</button>
+          </div>
         </div>
       ) : null}
 

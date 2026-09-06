@@ -37,6 +37,8 @@
 .dashboard-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
 .dashboard-heading h2 { margin: 0; font-size: 23px; font-weight: 500; }
 .dashboard-heading p { margin: 6px 0 0; color: var(--muted); }
+.dashboard-actions { display: flex; align-items: center; gap: 10px; }
+.dashboard-actions select { min-width: 148px; }
 .dashboard-summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
 .dashboard-summary-card { min-height: 142px; border: 1px solid #dbe3ed; border-radius: 6px; padding: 18px; background: #fff; display: flex; flex-direction: column; justify-content: space-between; }
 .dashboard-summary-card p, .dashboard-summary-card small { margin: 0; color: #526278; }
@@ -103,6 +105,18 @@
 .sample-workflow-date { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .organization-fields { display: grid; gap: 16px; }
 .organization-fields label { display: grid; gap: 6px; }
+.organization-row { cursor: pointer; }
+.organization-row:hover, .organization-row:focus { background: #f3f7ff; outline: none; }
+.organization-actions { display: flex; gap: 8px; }
+.organization-actions button { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; padding: 0; }
+.organization-connection-summary { display: flex; gap: 32px; margin: 0 0 24px; }
+.organization-connection-summary div { display: grid; gap: 4px; }
+.organization-connection-summary dt { color: #5d6c7f; font-size: 14px; }
+.organization-connection-summary dd { margin: 0; font-size: 24px; font-variant-numeric: tabular-nums; }
+.workspace-dialog h3 { margin: 24px 0 10px; font-size: 18px; font-weight: 400; }
+.organization-delete-confirmation { margin: 20px 0 0; color: #a33434; line-height: 1.45; }
+.danger-button { border-color: #c94141; background: #c94141; color: #ffffff; }
+.danger-button:hover:not(:disabled) { border-color: #a52e2e; background: #a52e2e; }
 .chemist-sample-row .workspace-link::after { content: ""; position: absolute; inset: 0; cursor: pointer; }
 .chemist-sample-row:hover, .chemist-sample-row:focus-within { background: #f3f4f6; }
 .workspace-dialog-examination .workspace-dialog-heading { margin-bottom: 16px; }
@@ -165,6 +179,13 @@
 .workspace-dialog h2 { font-size: 23px; font-weight: 400; margin: 0; overflow-wrap: anywhere; }
 .workspace-dialog .login-form { max-width: 580px; }
 .workspace-dialog .login-form label { font-weight: 400; font-size: 16px; }
+.invite-form { max-width: 100% !important; gap: 20px; }
+.invite-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.invite-form-grid .invite-center-field, .invite-form-grid .invite-email-field { grid-column: 1 / -1; }
+.invite-form .invite-result { margin: 0; }
+.invite-link-field { display: flex; gap: 8px; margin-top: 8px; min-width: 0; }
+.invite-link-field input { flex: 1; min-width: 0; font-family: var(--font-geist-mono), monospace; font-size: 14px; }
+.invite-link-field button { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 40px; width: 40px; padding: 0; }
 .workspace-dialog fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
 .workspace-form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 20px 0; align-items: end; }
 .workspace-form-grid label, .workspace-field { display: grid; gap: 7px; font-size: 16px; font-weight: 400; }
@@ -203,7 +224,7 @@
   .sample-metadata { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dashboard-summary-grid, .workspace-skeleton-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-@media (max-width: 480px) { .workspace-form-grid, .dashboard-summary-grid, .workspace-skeleton-cards { grid-template-columns: minmax(0, 1fr); } .workspace-dialog { padding: 16px; } .workspace-dialog-heading { flex-wrap: wrap; } .workspace-dialog-actions { margin-left: auto; flex-wrap: wrap; max-width: 100%; } .intake-location-fields { gap: 8px; } .dashboard-heading { align-items: stretch; flex-direction: column; } .workspace-skeleton-row { gap: 12px; } }
+@media (max-width: 480px) { .workspace-form-grid, .dashboard-summary-grid, .workspace-skeleton-cards, .invite-form-grid { grid-template-columns: minmax(0, 1fr); } .workspace-dialog { padding: 16px; } .workspace-dialog-heading { flex-wrap: wrap; } .workspace-dialog-actions { margin-left: auto; flex-wrap: wrap; max-width: 100%; } .intake-location-fields { gap: 8px; } .dashboard-heading { align-items: stretch; flex-direction: column; } .dashboard-actions { width: 100%; } .dashboard-actions select, .dashboard-actions button { flex: 1; } .workspace-skeleton-row { gap: 12px; } }
 @media (prefers-reduced-motion: reduce) { .workspace-skeleton i, .workspace-skeleton b, .workspace-skeleton small { animation: none; } }
 @media print {
   .workspace-nav, .workspace-header, .no-print { display: none !important; }

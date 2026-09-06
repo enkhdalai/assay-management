@@ -94,8 +94,6 @@ authRoutes.post("/invitations", async (c) => {
         organizationId: readText(body?.organizationId) || user.organizationId,
         email: readText(body?.email),
         role: readText(body?.role),
-        expiresInDays:
-          typeof body?.expiresInDays === "number" ? body.expiresInDays : undefined,
       },
       user,
     );
@@ -120,7 +118,7 @@ authRoutes.post("/invitations/accept", async (c) => {
     .catch(() => null);
 
   if (!result?.ok) {
-    return c.json({ ok: false, message: "Урилга хүчингүй эсвэл хугацаа дууссан байна." }, 400);
+    return c.json({ ok: false, message: "Урилга хүчингүй, цуцлагдсан эсвэл аль хэдийн ашиглагдсан байна." }, 400);
   }
 
   setAuthCookie(c, result.token, result.expiresAt);

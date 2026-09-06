@@ -43,7 +43,6 @@ type InvitationRecord = {
   token: string;
   status: "pending" | "accepted" | "expired" | "revoked";
   invitedByUserId: string;
-  expiresAt: Date;
 };
 
 const MAX_FAILED_LOGINS = 5;
@@ -137,9 +136,6 @@ export class InMemoryAuthStore implements AuthStore {
       token,
       status: "pending",
       invitedByUserId: actor.id,
-      expiresAt: new Date(
-        Date.now() + Math.max(1, input.expiresInDays ?? 7) * 24 * 60 * 60 * 1000,
-      ),
     };
 
     this.invitationsByToken.set(token, invitation);
@@ -148,7 +144,6 @@ export class InMemoryAuthStore implements AuthStore {
       id: invitation.id,
       email: invitation.email,
       role: invitation.role,
-      expiresAt: invitation.expiresAt,
       token,
     };
   }
@@ -157,8 +152,7 @@ export class InMemoryAuthStore implements AuthStore {
     const invitation = this.invitationsByToken.get(input.token);
     if (
       !invitation ||
-      invitation.status !== "pending" ||
-      invitation.expiresAt.getTime() <= Date.now()
+      invitation.status !== "pending"
     ) {
       return { ok: false, reason: "invalid_credentials" };
     }

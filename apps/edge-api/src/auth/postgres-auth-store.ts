@@ -37,8 +37,6 @@ import type {
 const MAX_FAILED_LOGINS = 5;
 const LOCK_MINUTES = 15;
 const INVITATION_TOKEN_BYTES = 32;
-const DEFAULT_INVITATION_DAYS = 7;
-const MAX_INVITATION_DAYS = 30;
 
 type UserRole = typeof users.$inferInsert.role;
 
@@ -279,11 +277,6 @@ export class PostgresAuthStore implements AuthStore {
 
     const token = randomBase64Url(INVITATION_TOKEN_BYTES);
     const tokenHash = await sha256Base64Url(token);
-    const expiresInDays = Math.min(
-      Math.max(1, input.expiresInDays ?? DEFAULT_INVITATION_DAYS),
-      MAX_INVITATION_DAYS,
-    );
-    const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000);
     const email = input.email.trim().toLowerCase();
     const role = parseRole(input.role);
 
@@ -296,13 +289,11 @@ export class PostgresAuthStore implements AuthStore {
         status: "pending",
         tokenHash,
         invitedByUserId: actor.id,
-        expiresAt,
       })
       .returning({
         id: userInvitations.id,
         email: userInvitations.email,
         role: userInvitations.role,
-        expiresAt: userInvitations.expiresAt,
       });
 
     await this.recordAuditEvent({
@@ -332,7 +323,6 @@ export class PostgresAuthStore implements AuthStore {
         email: userInvitations.email,
         role: userInvitations.role,
         status: userInvitations.status,
-        expiresAt: userInvitations.expiresAt,
       })
       .from(userInvitations)
       .innerJoin(organizations, eq(userInvitations.organizationId, organizations.id))
@@ -340,7 +330,6 @@ export class PostgresAuthStore implements AuthStore {
         and(
           eq(userInvitations.tokenHash, tokenHash),
           eq(userInvitations.status, "pending"),
-          gt(userInvitations.expiresAt, new Date()),
         ),
       )
       .limit(1);
@@ -394,7 +383,6 @@ export class PostgresAuthStore implements AuthStore {
         WHERE
           i.id = ${invitation.id}
           AND i.status = 'pending'
-          AND i.expires_at > now()
       ),
       created_user AS (
         INSERT INTO users (
