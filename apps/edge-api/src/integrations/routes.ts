@@ -30,6 +30,51 @@ integrationClientRoutes.get("/", async (c) => {
   return c.json({ ok: true, data });
 });
 
+integrationClientRoutes.post("/", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const input = normalizeCreateInput(body);
+  if (!input) return c.json({ ok: false, message: "Байгууллага, API client болон IP allowlist мэдээллийг зөв оруулна уу." }, 400);
+
+  const user = (await getAuthenticatedUserFromRequest(c.req.raw, c.env))!;
+  const db = createDatabase(c.env.DATABASE_URL!);
+  const id = crypto.randomUUID();
+  const auditId = crypto.randomUUID();
+  // The signing secret is supplied only through the service environment. This
+  // non-reversible value satisfies the generic client record without exposing
+  // a credential through the administration UI.
+  const secretHash = await sha256Base64Url(`${id}:${crypto.randomUUID()}`);
+  const entryHash = await sha256Base64Url(JSON.stringify({ auditId, id, input, actor: user.id }));
+  const result = await db.batch([
+    db.execute(sql`SELECT pg_advisory_xact_lock(741206827)`),
+    db.execute<ApiClientSettingsRecord>(sql`
+      WITH organization AS MATERIALIZED (
+        SELECT id FROM organizations WHERE id = ${input.organizationId}::uuid
+          AND type = ${input.organizationType}::organization_type AND status = 'active'
+      ), created AS (
+        INSERT INTO api_clients (id, organization_id, name, client_id, secret_hash, scopes, allowed_ip_cidrs)
+        SELECT ${id}::uuid, organization.id, ${input.name}, ${input.clientId}, ${secretHash},
+          ${input.scopes}, ${input.allowedIpCidrs} FROM organization
+        ON CONFLICT (client_id) DO NOTHING
+        RETURNING id, name, client_id AS "clientId", status::text AS status, scopes,
+          allowed_ip_cidrs AS "allowedIpCidrs", last_used_at::text AS "lastUsedAt", organization_id
+      ), audit AS (
+        INSERT INTO audit_logs (id, actor_user_id, actor_organization_id, action, entity_type, entity_id, new_values, reason, entry_hash)
+        SELECT ${auditId}::uuid, ${user.id}::uuid, ${user.organizationId}::uuid,
+          'integration_client.created', 'api_clients', created.id,
+          jsonb_build_object('organizationId', created.organization_id, 'clientId', created."clientId", 'scopes', created.scopes, 'allowedIpCidrs', created."allowedIpCidrs"),
+          'External API client created', ${entryHash} FROM created
+      )
+      SELECT created.id, created.name, created."clientId", created.status, created.scopes,
+        created."allowedIpCidrs", created."lastUsedAt", organization.name AS "organizationName",
+        organization.code AS "organizationCode", organization.type AS "organizationType"
+      FROM created JOIN organizations organization ON organization.id = created.organization_id
+    `),
+  ]);
+  const record = rows(result[1])[0];
+  if (!record) return c.json({ ok: false, message: "Client ID давхардсан эсвэл сонгосон байгууллага идэвхгүй байна." }, 409);
+  return c.json({ ok: true, data: record }, 201);
+});
+
 integrationClientRoutes.patch("/:id/ip-allowlist", async (c) => {
   const id = c.req.param("id");
   const body = await c.req.json().catch(() => null);
@@ -82,6 +127,21 @@ function normalizeAllowlist(value: unknown): string[] | null {
   return unique.every(isIpv4Cidr) ? unique : null;
 }
 
+function normalizeCreateInput(value: unknown): CreateApiClientInput | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const body = value as Record<string, unknown>;
+  const organizationId = typeof body.organizationId === "string" ? body.organizationId : "";
+  const organizationType = body.organizationType === "bank_of_mongolia" || body.organizationType === "commercial_bank"
+    ? body.organizationType : null;
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  const clientId = typeof body.clientId === "string" ? body.clientId.trim() : "";
+  const allowedIpCidrs = normalizeAllowlist(body.allowedIpCidrs);
+  const scopes = organizationType === "bank_of_mongolia" ? ["bom:bullion-certificates:read"] : ["bank:certificates:read"];
+  if (!isUuid(organizationId) || !organizationType || name.length < 2 || name.length > 120
+    || !/^[A-Za-z0-9._:-]{4,120}$/.test(clientId) || !allowedIpCidrs?.length) return null;
+  return { organizationId, organizationType, name, clientId, allowedIpCidrs, scopes };
+}
+
 function isIpv4Cidr(value: string): boolean {
   const [ip, prefix] = value.split("/");
   if (!ip || value.split("/").length > 2 || !isIpv4(ip)) return false;
@@ -107,4 +167,12 @@ type ApiClientSettingsRecord = {
   organizationName: string;
   organizationCode: string;
   organizationType: string;
+};
+type CreateApiClientInput = {
+  organizationId: string;
+  organizationType: "bank_of_mongolia" | "commercial_bank";
+  name: string;
+  clientId: string;
+  allowedIpCidrs: string[];
+  scopes: string[];
 };
