@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, ne, sql } from "drizzle-orm";
 import { canInviteRole, isCenterManager } from "../../../../packages/shared/src/workspace-access";
 import type { ManagedUser } from "../../../../packages/shared/src";
 import type { StaffUpdate } from "./auth-types";
@@ -75,6 +75,19 @@ export class PostgresAuthStore implements AuthStore {
       .where(actor.role === "system_admin" ? undefined : eq(users.organizationId, actor.organizationId))
       .orderBy(desc(users.createdAt));
     return records.map((record) => ({ ...record, lastLoginAt: record.lastLoginAt?.toISOString() ?? null, createdAt: record.createdAt.toISOString() }));
+  }
+
+  async listActiveChemists(actor: AuthenticatedUser): Promise<Array<Pick<ManagedUser, "id" | "fullName">>> {
+    const records = await this.db.select({ id: users.id, fullName: users.fullName })
+      .from(users)
+      .where(and(
+        eq(users.organizationId, actor.organizationId),
+        eq(users.role, "chemist"),
+        eq(users.status, "active"),
+        ne(users.id, actor.id),
+      ))
+      .orderBy(users.fullName, users.id);
+    return records;
   }
 
   async updateStaff(id: string, input: StaffUpdate, actor: AuthenticatedUser): Promise<boolean> {

@@ -26,6 +26,7 @@ const inMemoryBatches: BullionIntakeBatchRecord[] = [];
 let nextMemoryExaminationNumber = 1;
 const batchOwners = new Map<string, string>();
 const memoryExaminations = new Map<string, { revisionNo: number; input: SubmitBullionExaminationInput; submittedAt: string | null }>();
+const memorySubstitutions = new Map<string, { byName: string; transferredAt: string; recipientId: string }>();
 const visibleBatches = (user: AuthenticatedUser) => inMemoryBatches.filter((batch) => user.role === "system_admin" || batchOwners.get(batch.id) === user.organizationId);
 
 export function getMemoryReport(user: AuthenticatedUser, from: string, to: string) {
@@ -87,6 +88,72 @@ bullionRoutes.get("/samples/:id/print-chemists", async (c) => {
   return c.json({ ok: true, data });
 });
 
+bullionRoutes.get("/samples/:id/substitute-chemists", async (c) => {
+  const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
+  if (!user) return c.json({ ok: false }, 401);
+  if (user.role !== "chemist") return c.json({ ok: false }, 403);
+  const sample = (await listSamples(c.env, user)).find((item) => item.id === c.req.param("id"));
+  if (!sample) return c.json({ ok: false }, 404);
+  if (!c.env.DATABASE_URL) {
+    const chemists = await (await getAuthStore(c.env))!.listActiveChemists(user);
+    return c.json({ ok: true, data: chemists });
+  }
+  const data = readRows(await createDatabase(c.env.DATABASE_URL).execute(sql`
+    SELECT id, full_name AS "fullName" FROM users
+    WHERE organization_id = ${user.organizationId} AND role = 'chemist' AND status = 'active' AND id <> ${user.id}
+    ORDER BY full_name, id
+  `));
+  return c.json({ ok: true, data });
+});
+
+bullionRoutes.post("/samples/:id/substitute", async (c) => {
+  const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
+  if (!user) return c.json({ ok: false }, 401);
+  if (user.role !== "chemist") return c.json({ ok: false }, 403);
+  const sampleId = c.req.param("id");
+  const substituteId = text(object(await c.req.json().catch(() => null)).chemistId);
+  if (!isUuid(sampleId) || !isUuid(substituteId) || substituteId === user.id) return c.json({ ok: false }, 400);
+  if (!c.env.DATABASE_URL) {
+    const batch = visibleBatches(user).find((record) => record.status === "sample_taken" && record.items.some((item) => item.id === sampleId && item.assignedChemistId === user.id));
+    const item = batch?.items.find((record) => record.id === sampleId);
+    const chemists = await (await getAuthStore(c.env))!.listActiveChemists(user);
+    const substitute = chemists.find((person) => person.id === substituteId);
+    if (!item || !substitute) return c.json({ ok: false }, 404);
+    const transferredAt = new Date().toISOString();
+    item.assignedChemistId = substitute.id; item.assignedChemistName = substitute.fullName; item.assignedAt = transferredAt;
+    memorySubstitutions.set(sampleId, { byName: user.fullName, transferredAt, recipientId: substitute.id });
+    return c.json({ ok: true });
+  }
+  const db = createDatabase(c.env.DATABASE_URL);
+  const eventId = crypto.randomUUID();
+  const hash = await sha256Base64Url(JSON.stringify({ eventId, userId: user.id, sampleId, substituteId }));
+  const results = await db.batch([
+    db.execute(sql`SELECT pg_advisory_xact_lock(741206825)`),
+    db.execute(sql`
+      WITH target AS MATERIALIZED (
+        SELECT i.id, i.assigned_chemist_id AS "assignedChemistId" FROM bullion_intake_items i
+        JOIN bullion_intake_batches b ON b.id = i.batch_id
+        JOIN users substitute ON substitute.id = ${substituteId}::uuid AND substitute.organization_id = b.assay_center_id
+          AND substitute.role = 'chemist' AND substitute.status = 'active'
+        WHERE i.id = ${sampleId}::uuid AND i.assigned_chemist_id = ${user.id}::uuid AND b.status = 'sample_taken'
+          AND b.assay_center_id = ${user.organizationId}::uuid
+          AND NOT EXISTS (SELECT 1 FROM bullion_examination_revisions e WHERE e.bullion_item_id = i.id AND e.status = 'approved')
+        FOR UPDATE OF i
+      ), updated AS (
+        UPDATE bullion_intake_items i SET assigned_chemist_id = ${substituteId}::uuid, assigned_at = now()
+        WHERE i.id IN (SELECT id FROM target) RETURNING i.id
+      ), audit AS (
+        INSERT INTO audit_logs (id, actor_user_id, actor_organization_id, action, entity_type, entity_id, old_values, new_values, reason, entry_hash)
+        SELECT ${eventId}, ${user.id}, ${user.organizationId}, 'bullion_sample.substituted', 'bullion_intake_items', updated.id,
+          jsonb_build_object('assignedChemistId', target."assignedChemistId"), jsonb_build_object('assignedChemistId', ${substituteId}::text),
+          'Chemist requested a substitute', ${hash} FROM updated JOIN target ON target.id = updated.id
+      ) SELECT id FROM updated
+    `),
+  ]);
+  if (!readRows(results[1]).length) return c.json({ ok: false, message: "Дээж хуваарилагдсан, баталгаажсан эсвэл орлох химич идэвхгүй байна." }, 409);
+  return c.json({ ok: true });
+});
+
 bullionRoutes.post("/samples/:id/print", async (c) => {
   const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
   if (!user) return c.json({ ok: false }, 401);
@@ -132,9 +199,11 @@ async function listSamples(env: EdgeApiEnv, user: AuthenticatedUser): Promise<An
       && (user.role !== "chemist" || item.assignedChemistId === user.id))
     .map((item) => {
       const revision = memoryExaminations.get(item.id);
+      const substitution = memorySubstitutions.get(item.id);
       return { id: item.id, analysisNo: item.analysisNo!, metal: batch.metal,
         ...(isCenterManager(user.role) ? { batchId: batch.id, assignedChemistId: item.assignedChemistId ?? null, assignedChemistName: item.assignedChemistName ?? null,
           assignedAt: item.assignedAt ?? null, completedAt: revision?.submittedAt ?? null } : {}),
+        ...(substitution?.recipientId === user.id ? { substitutedByName: substitution.byName, substitutedAt: substitution.transferredAt } : {}),
         receivedAt: batch.receivedAt || batch.createdAt, sampleWeightMilligrams: item.sampleWeightMilligrams!,
         delta: batch.delta ?? -0.03125, revisionNo: revision?.revisionNo ?? 0,
         status: revision?.input.status ?? "pending", examination: revision?.input ?? null };
@@ -142,6 +211,7 @@ async function listSamples(env: EdgeApiEnv, user: AuthenticatedUser): Promise<An
   const result = await createDatabase(env.DATABASE_URL).execute<AnonymousSample>(sql`
     SELECT i.id, b.id AS "batchId", i.assigned_chemist_id AS "assignedChemistId", i.assigned_at AS "assignedAt", e.submitted_at AS "completedAt",
       (SELECT full_name FROM users WHERE id = i.assigned_chemist_id) AS "assignedChemistName",
+      transfer."substitutedByName", transfer."substitutedAt",
       i.examination_number::text AS "analysisNo", b.metal,
       b.received_at AS "receivedAt", i.sample_weight_milligrams::float AS "sampleWeightMilligrams",
       b.delta::float AS delta, COALESCE(e.revision_no, 0) AS "revisionNo", COALESCE(e.status::text, 'pending') AS status,
@@ -152,6 +222,13 @@ async function listSamples(env: EdgeApiEnv, user: AuthenticatedUser): Promise<An
         'reexaminationRequested', e.reexamination_requested, 'notes', e.notes) END AS examination
     FROM bullion_intake_items i JOIN bullion_intake_batches b ON b.id = i.batch_id
     LEFT JOIN LATERAL (SELECT * FROM bullion_examination_revisions WHERE bullion_item_id = i.id ORDER BY revision_no DESC LIMIT 1) e ON true
+    LEFT JOIN LATERAL (
+      SELECT sender.full_name AS "substitutedByName", audit.created_at AS "substitutedAt"
+      FROM audit_logs audit JOIN users sender ON sender.id = audit.actor_user_id
+      WHERE audit.action = 'bullion_sample.substituted' AND audit.entity_type = 'bullion_intake_items' AND audit.entity_id = i.id
+        AND audit.new_values->>'assignedChemistId' = i.assigned_chemist_id::text
+      ORDER BY audit.created_at DESC LIMIT 1
+    ) transfer ON ${user.role} = 'chemist'
     WHERE b.status = 'sample_taken' AND i.sample_weight_milligrams > 0
       AND (${user.role} <> 'chemist' OR i.assigned_chemist_id = ${user.id})
       AND (${user.role} = 'system_admin' OR b.assay_center_id = ${user.organizationId})

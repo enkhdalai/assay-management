@@ -106,4 +106,12 @@ test("melter intake, LE sampling, anonymous chemistry, and reports respect cente
   assert.equal(report.find((row) => row.metal === "gold").bullionCount, 1);
   assert.equal(report.find((row) => row.metal === "gold").submittedCount, 1);
   assert.doesNotMatch(JSON.stringify(report), /Private Mining|customer|bank/);
+
+  const substitute = await invite(le.cookie, "chemist", "substitute@assay.local");
+  const substituteChoices = (await (await request(`/api/v1/bullion/samples/${itemId}/substitute-chemists`, chemist.cookie)).json()).data;
+  assert(substituteChoices.some((choice) => choice.id === substitute.user.id));
+  assert.equal((await request(`/api/v1/bullion/samples/${itemId}/substitute`, chemist.cookie, "POST", { chemistId: substitute.user.id })).status, 200);
+  assert.equal((await (await request("/api/v1/bullion/samples", chemist.cookie)).json()).data.length, 0);
+  assert.equal((await (await request("/api/v1/bullion/samples", substitute.cookie)).json()).data.length, 1);
+  assert.equal((await request(`/api/v1/bullion/samples/${itemId}/print`, chemist.cookie, "POST", {})).status, 404);
 });

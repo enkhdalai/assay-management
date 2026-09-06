@@ -624,6 +624,8 @@ h2 {
 
 .customer-record-row { cursor: pointer; }
 
+.customer-record-row .customer-name { font-weight: 400; }
+
 .customer-record-row:hover,
 .customer-record-row:focus-visible { background: #f4f8ff; outline: 2px solid #7ea6df; outline-offset: -2px; }
 

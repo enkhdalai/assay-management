@@ -245,6 +245,12 @@ export class InMemoryAuthStore implements AuthStore {
         organizationType: "private_assay_center", mfaEnabled: false, lastLoginAt: null, createdAt: new Date(0).toISOString() }));
   }
 
+  async listActiveChemists(actor: AuthenticatedUser): Promise<Array<Pick<ManagedUser, "id" | "fullName">>> {
+    return [...this.usersById.values()]
+      .filter((user) => user.organizationId === actor.organizationId && user.role === "chemist" && user.status === "active" && user.id !== actor.id)
+      .map((user) => ({ id: user.id, fullName: user.fullName }));
+  }
+
   async updateStaff(id: string, input: StaffUpdate, actor: AuthenticatedUser): Promise<boolean> {
     const user = this.usersById.get(id);
     if (!user || !canManageStaff(actor, user)) return false;

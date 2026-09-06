@@ -75,7 +75,7 @@ export function ChemistPicker({ sample, onSaved }: { sample: AnonymousSample; on
         <span>{sample.assignedChemistName || "Химич хуваарилаагүй"}</span><ChevronDown size={16} aria-hidden="true" />
       </button>
       <div ref={menu} id={menuId} popover="auto" className="chemist-options chemist-popover" role="group" aria-label="Химичид">
-        <button type="button" aria-pressed={!sample.assignedChemistId} disabled={saving} onClick={() => choose(null)}><Check size={16} aria-hidden="true" style={{ visibility: sample.assignedChemistId ? "hidden" : "visible" }} /><span>Хуваарилалтгүй</span></button>
+        <button type="button" aria-pressed={!sample.assignedChemistId} disabled={saving} onClick={() => choose(null)}><Check size={16} aria-hidden="true" style={{ visibility: sample.assignedChemistId ? "hidden" : "visible" }} /><span>Хуваарилахгүй</span></button>
         {chemists.map((chemist) => <button key={chemist.id} type="button" aria-pressed={sample.assignedChemistId === chemist.id}
           disabled={saving || chemist.status !== "active"} onClick={() => choose(chemist.id)}><Check size={16} aria-hidden="true" style={{ visibility: sample.assignedChemistId === chemist.id ? "visible" : "hidden" }} />
           <span>{chemist.fullName}{chemist.status !== "active" ? " (идэвхгүй)" : ""}</span></button>)}

@@ -82,6 +82,17 @@
 .workspace-dialog-compact { width: min(560px, calc(100vw - 32px)); }
 .workspace-dialog-compact .login-form { width: 100%; max-width: none; }
 .workspace-dialog-examination { --examination-input-width: 148px; width: min(1180px, calc(100vw - 32px)); padding: 20px; }
+.chemist-workstation { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 20px; align-items: start; }
+.chemist-sample-list { border: 1px solid #dbe3ed; background: #ffffff; }
+.chemist-sample-list h2 { margin: 0; padding: 16px; background: #f4f7fa; color: #46556a; font-size: 18px; font-weight: 400; }
+.chemist-sample-options { display: grid; }
+.chemist-sample-option { display: grid; grid-template-columns: 48px 1fr; gap: 12px; align-items: center; width: 100%; min-height: 58px; padding: 12px 16px; border: 0; border-top: 1px solid #e3e8f0; border-radius: 0; background: #ffffff; color: #202b39; text-align: left; }
+.chemist-sample-option:hover, .chemist-sample-option[aria-selected="true"] { background: #f3f7ff; color: #174fae; }
+.chemist-sample-option strong { display: inline-flex; align-items: center; gap: 8px; font-weight: 400; }
+.new-sample-dot { width: 8px; height: 8px; border-radius: 50%; background: #d97706; flex: 0 0 8px; }
+.chemist-sample-options p { margin: 0; padding: 16px; color: #5d6c7f; }
+.chemist-form-panel { min-width: 0; }
+.chemist-examination { --examination-input-width: 148px; min-width: 0; border: 1px solid #cfd9e6; background: #ffffff; box-shadow: 0 8px 22px rgb(27 47 74 / 12%); padding: 20px; }
 .workspace-dialog-examination:focus, .workspace-dialog-examination:focus-visible { outline: none; }
 .chemist-sample-row { position: relative; }
 .manager-sample-row { cursor: pointer; }
@@ -106,11 +117,11 @@
 .examination-table td { padding: 4px 3px; height: 48px; }
 .calculation-column { width: 188px; }
 .measurement-label-column { width: 154px; }
-.workspace-dialog-examination .examination-form input:not([type="radio"]):not([type="checkbox"]) { width: 100%; min-height: 40px; height: 40px; padding: 6px 8px; font-size: 17px; }
+.workspace-dialog-examination .examination-form input:not([type="radio"]):not([type="checkbox"]), .chemist-examination .examination-form input:not([type="radio"]):not([type="checkbox"]) { width: 100%; min-height: 40px; height: 40px; padding: 6px 8px; font-size: 17px; }
 .examination-table input[type="number"], .examination-results input { text-align: right; }
 .examination-calculation { display: flex; gap: 3px; justify-content: center; }
 .examination-calculation label { display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; font-size: 15px; }
-.workspace-dialog-examination input[type="radio"], .workspace-dialog-examination input[type="checkbox"] { min-height: 0; width: 16px; height: 16px; padding: 0; margin: 0; accent-color: #596579; flex-shrink: 0; }
+.workspace-dialog-examination input[type="radio"], .workspace-dialog-examination input[type="checkbox"], .chemist-examination input[type="radio"], .chemist-examination input[type="checkbox"] { min-height: 0; width: 16px; height: 16px; padding: 0; margin: 0; accent-color: #596579; flex-shrink: 0; }
 .examination-results h3 { display: flex; align-items: center; justify-content: center; height: 44px; margin: 0; font-size: 16px; font-weight: 400; }
 .examination-results label { display: grid; gap: 5px; margin: 4px 0 12px; font-size: 15px; }
 .examination-right { grid-column: 2 / 4; display: grid; grid-template-columns: calc(166px + 2 * var(--examination-input-width)) var(--examination-input-width); column-gap: 16px; align-items: start; }
@@ -129,7 +140,7 @@
 .examination-description label { display: grid; gap: 5px; }
 @media (prefers-reduced-motion: reduce) { .examination-description { transition: none; } }
 .examination-recheck { display: flex; gap: 6px; align-items: flex-start; min-height: 40px; line-height: 20px; }
-.workspace-dialog-examination .examination-recheck input[type="checkbox"] { margin-top: 2px; }
+.workspace-dialog-examination .examination-recheck input[type="checkbox"], .chemist-examination .examination-recheck input[type="checkbox"] { margin-top: 2px; }
 .examination-recheck span { text-align: right; }
 .examination-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 16px; }
 .examination-actions > span { margin-right: auto; font-size: 15px; color: #46556a; }
@@ -179,6 +190,7 @@
 .workspace-main .panel { box-shadow: none; border: 0; padding: 0; border-radius: 0; }
 .workspace-main .settings-summary { display: none; }
 @media (max-width: 850px) {
+  .chemist-workstation { grid-template-columns: 1fr; }
   .workspace-shell.with-navigation { display: block; }
   .workspace-nav { border-right: 0; border-bottom: 1px solid var(--line); padding: 14px; }
   .workspace-nav > p { margin: 10px 0; }
@@ -203,9 +215,9 @@
 .sample-pagination button { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; padding: 8px; }
 .examination-total { display: grid; gap: 5px; line-height: 20px; text-align: center; font-weight: 400; }
 .examination-total input { text-align: right; background-color: #f3f4f6; }
-.workspace-dialog-examination .examination-form input[data-calculated] { background-color: #f3f4f6; }
-.examination-print-chemist { grid-column: 2 / 4; display: grid; grid-template-columns: 154px minmax(0, 1fr); gap: 3px; align-items: center; margin-top: 12px; font-size: 15px; }
-.examination-print-chemist select { width: 100%; min-width: 0; height: 40px; }
+.workspace-dialog-examination .examination-form input[data-calculated], .chemist-examination .examination-form input[data-calculated] { background-color: #f3f4f6; }
+.substitute-dialog-copy, .substitute-dialog-empty { margin: 0 0 20px; color: #46556a; line-height: 1.5; }
+.substitute-dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; }
 .examination-total input:focus, .examination-total input:focus-visible { outline: none; box-shadow: none; }
 .examination-weights input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
 .examination-weights input[type="number"]::-webkit-inner-spin-button,

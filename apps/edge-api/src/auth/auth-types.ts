@@ -41,6 +41,7 @@ export type AcceptInvitationInput = {
 
 export type AuthStore = {
   listStaff(actor: AuthenticatedUser): Promise<ManagedUser[]>;
+  listActiveChemists(actor: AuthenticatedUser): Promise<Array<Pick<ManagedUser, "id" | "fullName">>>;
   updateStaff(id: string, input: StaffUpdate, actor: AuthenticatedUser): Promise<boolean>;
   login(email: string, password: string): Promise<LoginResult>;
   getUserBySessionToken(token: string | undefined): Promise<AuthenticatedUser | null>;

@@ -79,6 +79,8 @@ export type AnonymousSample = {
   assignedChemistName?: string | null;
   assignedAt?: string | null;
   completedAt?: string | null;
+  substitutedByName?: string | null;
+  substitutedAt?: string | null;
   id: string;
   analysisNo: string;
   metal: MetalType;

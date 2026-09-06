@@ -127,7 +127,7 @@ export function CustomersView({
               <div className="table-row customer-record-row" role="row" key={customer.id} tabIndex={0} onClick={() => setSelectedCustomerId(customer.id)} onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedCustomerId(customer.id); }
               }}>
-                <strong>{customer.displayName}</strong>
+                <span className="customer-name">{customer.displayName}</span>
                 <span>{customer.type === "individual" ? "Иргэн" : "Байгууллага"}</span>
                 <span>{customer.registrationNumberMasked ?? "-"}</span>
                 <span>{formatMaskedContact(customer)}</span>

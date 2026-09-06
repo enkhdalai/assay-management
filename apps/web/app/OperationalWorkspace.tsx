@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import type { AuthenticatedUser } from "../../../packages/security/src/session";
 import type { CustomerRecord, ManagedUser } from "../../../packages/shared/src";
 import { canManageStaff, isCenterManager, workspaceRoleLabels } from "../../../packages/shared/src/workspace-access";
@@ -194,11 +194,12 @@ function ReportsWorkspace({ organizationName }: { organizationName: string }) {
 }
 
 export function WorkspaceDialog({ title, onClose, children, headerActions, titleBadge, size = "wide" }: { title: string; onClose(): void; children: React.ReactNode; headerActions?: React.ReactNode; titleBadge?: React.ReactNode; size?: "wide" | "compact" | "examination" }) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
-    const dialog = document.querySelector<HTMLDialogElement>("dialog.workspace-dialog");
+    const dialog = dialogRef.current;
     dialog?.showModal();
     return () => { dialog?.close(); previous?.focus(); };
   }, []);
-  return <dialog className={`workspace-dialog${size === "wide" ? "" : ` workspace-dialog-${size}`}`} aria-label={title} onCancel={(event) => { event.preventDefault(); onClose(); }}><div className="workspace-dialog-heading"><div className="workspace-dialog-title"><h2>{title}</h2>{titleBadge}</div><div className="workspace-dialog-actions">{headerActions}<button type="button" className="secondary-button" onClick={onClose}>Хаах</button></div></div>{children}</dialog>;
+  return <dialog ref={dialogRef} className={`workspace-dialog${size === "wide" ? "" : ` workspace-dialog-${size}`}`} aria-label={title} onCancel={(event) => { event.preventDefault(); onClose(); }}><div className="workspace-dialog-heading"><div className="workspace-dialog-title"><h2>{title}</h2>{titleBadge}</div><div className="workspace-dialog-actions">{headerActions}<button type="button" className="secondary-button" onClick={onClose}>Хаах</button></div></div>{children}</dialog>;
 }
