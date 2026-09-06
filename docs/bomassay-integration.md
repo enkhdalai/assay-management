@@ -28,6 +28,7 @@ the same client identifier and signing secret in both systems:
 - BOM Grails app: `BOM_ASSAY_API_URL`, `BOM_ASSAY_CLIENT_ID`,
   `BOM_ASSAY_SIGNING_SECRET`
 
-The Grails app requires `ROLE_BOM_ASSAY` for `/bomassay/index`. The API should
-be served over HTTPS and its API-client IP allowlist should contain only the
-BOM egress addresses.
+The Grails app requires `ROLE_BOM_ASSAY` for `/bomassay/index`. The API is
+served only over HTTPS. Every BOM or commercial-bank API client must have a
+non-empty IPv4/CIDR allowlist, managed by a super admin under **Тохиргоо**;
+requests from every other address are rejected.

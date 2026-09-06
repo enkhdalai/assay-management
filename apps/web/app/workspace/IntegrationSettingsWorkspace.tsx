@@ -1,0 +1,69 @@
+"use client";
+
+import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { RefreshCw, Save } from "lucide-react";
+import { api } from "./api";
+import { WorkspaceLoadingSkeleton } from "./WorkspaceLoadingSkeleton";
+
+type IntegrationClient = {
+  id: string;
+  name: string;
+  clientId: string;
+  status: string;
+  scopes: string[];
+  allowedIpCidrs: string[];
+  lastUsedAt: string | null;
+  organizationName: string;
+  organizationCode: string;
+  organizationType: string;
+};
+
+export function IntegrationSettingsWorkspace() {
+  const [clients, setClients] = useState<IntegrationClient[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const refresh = useCallback(() => api<{ data: IntegrationClient[] }>("/api/v1/integration-clients")
+    .then(({ data }) => { setClients(data); setError(""); })
+    .catch((error) => setError(error.message)).finally(() => setLoading(false)), []);
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  return <section className="workspace-section integration-settings">
+    <div className="workspace-section-heading"><div><h2>Гадаад API хамгаалалт</h2><p>Зөвхөн зөвшөөрөгдсөн IP хаяг эсвэл CIDR сүлжээнээс BOM болон арилжааны банкны API хандах боломжтой.</p></div>
+      <button type="button" className="secondary-button" title="Шинэчлэх" aria-label="Шинэчлэх" disabled={loading} onClick={() => { setLoading(true); void refresh(); }}><RefreshCw size={18} /></button>
+    </div>
+    {error && <p role="alert" className="login-error">{error}</p>}
+    {loading ? <WorkspaceLoadingSkeleton rows={3} /> : clients.length === 0 ? <p className="empty-state">BOM эсвэл арилжааны банкны API client бүртгэгдээгүй байна.</p> : <div className="integration-client-list">
+      {clients.map((client) => <IntegrationClientCard key={client.id} client={client} onSaved={(updated) => setClients((current) => current.map((entry) => entry.id === updated.id ? updated : entry))} />)}
+    </div>}
+  </section>;
+}
+
+function IntegrationClientCard({ client, onSaved }: { client: IntegrationClient; onSaved(client: IntegrationClient): void }) {
+  const [value, setValue] = useState(client.allowedIpCidrs.join("\n"));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const type = client.organizationType === "bank_of_mongolia" ? "Монголбанк" : "Арилжааны банк";
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const allowedIpCidrs = [...new Set(value.split(/[\n,]+/).map((entry) => entry.trim()).filter(Boolean))];
+    setSaving(true); setError(""); setSuccess("");
+    try {
+      const response = await api<{ data: IntegrationClient }>(`/api/v1/integration-clients/${client.id}/ip-allowlist`, {
+        method: "PATCH", body: JSON.stringify({ allowedIpCidrs }),
+      });
+      setValue(response.data.allowedIpCidrs.join("\n"));
+      onSaved(response.data); setSuccess("IP allowlist хадгалагдлаа.");
+    } catch (error) { setError((error as Error).message); }
+    finally { setSaving(false); }
+  }
+  return <article className="integration-client-card">
+    <header><div><h3>{client.organizationName}</h3><p>{type} · {client.name}</p></div><span className={`status-badge ${client.allowedIpCidrs.length ? "status-active" : "status-warning"}`}>{client.allowedIpCidrs.length ? "Хязгаарлагдсан" : "Хаалттай"}</span></header>
+    <dl><div><dt>Client ID</dt><dd>{client.clientId}</dd></div><div><dt>Эрх</dt><dd>{client.scopes.join(", ") || "-"}</dd></div><div><dt>Сүүлд ашигласан</dt><dd>{client.lastUsedAt?.replace("T", " ").slice(0, 16) ?? "-"}</dd></div></dl>
+    <form onSubmit={submit}><label>Зөвшөөрөгдсөн IP хаяг / CIDR<textarea aria-label={`${client.organizationName} IP allowlist`} value={value} onChange={(event) => setValue(event.target.value)} placeholder={"203.0.113.24\n198.51.100.0/28"} rows={4} disabled={saving} /></label>
+      <p className="field-hint">Нэг мөрөнд нэг IPv4 хаяг эсвэл CIDR. Хоосон жагсаалт хадгалах боломжгүй.</p>
+      {error && <p role="alert" className="login-error">{error}</p>}{success && <p className="settings-success">{success}</p>}
+      <button className="primary-button" type="submit" disabled={saving}><Save size={18} />{saving ? "Хадгалж байна" : "IP allowlist хадгалах"}</button>
+    </form>
+  </article>;
+}

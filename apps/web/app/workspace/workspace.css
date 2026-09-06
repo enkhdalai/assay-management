@@ -115,6 +115,27 @@
 .organization-connection-summary dd { margin: 0; font-size: 24px; font-variant-numeric: tabular-nums; }
 .workspace-dialog h3 { margin: 24px 0 10px; font-size: 18px; font-weight: 400; }
 .organization-delete-confirmation { margin: 20px 0 0; color: #a33434; line-height: 1.45; }
+.workspace-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin: 18px 0; }
+.workspace-section-heading h2 { margin: 0; font-size: 24px; }
+.workspace-section-heading p { margin: 8px 0 0; color: var(--muted); max-width: 720px; line-height: 1.5; }
+.integration-client-list { display: grid; gap: 16px; max-width: 900px; }
+.integration-client-card { border: 1px solid #dbe3ef; border-radius: 6px; padding: 20px; box-shadow: 0 4px 14px rgba(31, 53, 84, .08); }
+.integration-client-card header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+.integration-client-card h3 { margin: 0; font-size: 20px; }
+.integration-client-card header p, .field-hint { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+.integration-client-card dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }
+.integration-client-card dl div { min-width: 0; }
+.integration-client-card dt { color: var(--muted); font-size: 13px; }
+.integration-client-card dd { margin: 4px 0 0; overflow-wrap: anywhere; }
+.integration-client-card form { display: grid; gap: 10px; }
+.integration-client-card label { display: grid; gap: 7px; font-weight: 600; }
+.integration-client-card textarea { resize: vertical; font: inherit; line-height: 1.45; }
+.integration-client-card .primary-button { justify-self: start; display: inline-flex; align-items: center; gap: 8px; }
+.status-badge { border-radius: 4px; padding: 5px 8px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.status-active { color: #17633c; background: #e9f8ef; }
+.status-warning { color: #9b5b08; background: #fff5df; }
+.settings-success { margin: 0; color: #17633c; }
+@media (max-width: 720px) { .workspace-section-heading { flex-direction: column; } .integration-client-card dl { grid-template-columns: 1fr; } }
 .danger-button { border-color: #c94141; background: #c94141; color: #ffffff; }
 .danger-button:hover:not(:disabled) { border-color: #a52e2e; background: #a52e2e; }
 .chemist-sample-row .workspace-link::after { content: ""; position: absolute; inset: 0; cursor: pointer; }

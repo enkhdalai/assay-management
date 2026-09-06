@@ -9,13 +9,14 @@ import { InviteUserForm } from "./users/invite/InviteUserForm";
 import { IntakeWorkspace } from "./workspace/IntakeWorkspace";
 import { SampleWorkspace } from "./workspace/SampleWorkspace";
 import { OrganizationsWorkspace } from "./workspace/OrganizationsWorkspace";
+import { IntegrationSettingsWorkspace } from "./workspace/IntegrationSettingsWorkspace";
 import { WorkspaceLoadingSkeleton } from "./workspace/WorkspaceLoadingSkeleton";
 import type { OrganizationRecord } from "../../../packages/shared/src/organization-types";
 import { api } from "./workspace/api";
 import "./workspace/workspace.css";
 
-type View = "dashboard" | "intake" | "samples" | "customers" | "staff" | "reports" | "organizations";
-const labels: Record<View, string> = { dashboard: "Нүүр", intake: "Гулдмай хүлээн авах", samples: "Дээж", customers: "Харилцагчид", staff: "Ажилтнууд", reports: "Тайлан", organizations: "Байгууллагууд" };
+type View = "dashboard" | "intake" | "samples" | "customers" | "staff" | "reports" | "organizations" | "settings";
+const labels: Record<View, string> = { dashboard: "Нүүр", intake: "Гулдмай хүлээн авах", samples: "Дээж", customers: "Харилцагчид", staff: "Ажилтнууд", reports: "Тайлан", organizations: "Байгууллагууд", settings: "Тохиргоо" };
 
 export function OperationalWorkspace() {
   const [user, setUser] = useState<AuthenticatedUser | null>(null);
@@ -40,7 +41,7 @@ export function OperationalWorkspace() {
   const manager = user && isCenterManager(user.role);
   const allowed = user && (manager || user.role === "chemist" || user.role === "intake_officer");
   const views: View[] = manager ? ["dashboard", "intake", "samples", "customers", "staff", "reports"] : user?.role === "chemist" ? ["samples"] : ["intake"];
-  if (user?.role === "system_admin") views.push("organizations");
+  if (user?.role === "system_admin") views.push("organizations", "settings");
   return <div className={`workspace-shell ${manager ? "with-navigation" : ""}`}>
     {manager && <aside className="workspace-nav"><a className="workspace-brand" href="/"><img src="/favicon.svg" alt="" width="40" height="40" /><span>Сорьцын төв</span></a>
       <nav aria-label="Үндсэн цэс">{views.map((item) => <button type="button" key={item} aria-current={view === item ? "page" : undefined} onClick={() => { setView(item); setError(""); }}>{labels[item]}</button>)}</nav></aside>}
@@ -58,6 +59,7 @@ export function OperationalWorkspace() {
         {manager && view === "customers" && <CustomerWorkspace />}
         {manager && view === "staff" && <StaffWorkspace user={user} />}
         {user.role === "system_admin" && view === "organizations" && <OrganizationsWorkspace />}
+        {user.role === "system_admin" && view === "settings" && <IntegrationSettingsWorkspace />}
         {manager && view === "reports" && <ReportsWorkspace organizationName={user.role === "system_admin" ? "Бүх төв" : user.organizationName} />}
       </>}
     </main>

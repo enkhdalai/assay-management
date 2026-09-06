@@ -12,6 +12,7 @@ import { apiSecurityMiddleware, applyApiSecurityHeaders } from "./security/middl
 import { userRoutes } from "./users/routes";
 import { organizationRoutes } from "./organizations/routes";
 import { reportRoutes } from "./bullion/reports";
+import { integrationClientRoutes } from "./integrations/routes";
 import { getAuthenticatedUserFromRequest } from "./auth/http";
 
 export type AssetFetcher = {
@@ -81,6 +82,7 @@ edgeApi.route("/v1/organizations", organizationRoutes);
 edgeApi.route("/v1/banks", bankRoutes);
 edgeApi.route("/v1/bullion", bullionRoutes);
 edgeApi.route("/v1/reports", reportRoutes);
+edgeApi.route("/v1/integration-clients", integrationClientRoutes);
 edgeApi.route("/setup", setupRoutes);
 edgeApi.route("/bom/v1", bomRoutes);
 

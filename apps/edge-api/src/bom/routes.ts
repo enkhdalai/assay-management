@@ -195,7 +195,10 @@ async function authorizeBomRequest(
   if (!client || !client.scopes.includes(requiredScope)) {
     return bomError(403, "API эрх хүрэлцэхгүй байна.");
   }
-  if (client.allowedIpCidrs.length > 0 && (!clientIp || !client.allowedIpCidrs.some((range) => ipMatchesRange(clientIp, range)))) {
+  if (client.allowedIpCidrs.length === 0) {
+    return bomError(403, "API IP allowlist тохируулаагүй байна.");
+  }
+  if (!clientIp || !client.allowedIpCidrs.some((range) => ipMatchesRange(clientIp, range))) {
     return bomError(403, "API IP хаяг зөвшөөрөгдөөгүй байна.");
   }
 
