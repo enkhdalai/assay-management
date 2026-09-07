@@ -6,8 +6,8 @@ import type { CertificateEntry } from "../../../../packages/shared/src/bullion-t
 type Certificate = { issueYear: number; sequenceNo: number; issuedAt: string; entries: CertificateEntry[] };
 const rows = <T,>(result: T[] | { rows: T[] }) => Array.isArray(result) ? result : result.rows;
 
-export async function requestCertificate(db: AppDatabase, user: AuthenticatedUser, sampleId: string) {
-  const hash = await sha256Base64Url(JSON.stringify({ sampleId, actor: user.id, nonce: crypto.randomUUID() }));
+export async function issueCertificate(db: AppDatabase, user: AuthenticatedUser, batchId: string) {
+  const hash = await sha256Base64Url(JSON.stringify({ batchId, actor: user.id, nonce: crypto.randomUUID() }));
   // Serialize issuance with examination saves. The number and report snapshot commit together.
   const result = await db.batch([
     db.execute(sql`SELECT pg_advisory_xact_lock(741206825)`),
@@ -15,15 +15,13 @@ export async function requestCertificate(db: AppDatabase, user: AuthenticatedUse
       WITH batch AS MATERIALIZED (
         SELECT b.*, EXTRACT(YEAR FROM CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ulaanbaatar')::integer AS issue_year
         FROM bullion_intake_batches b JOIN organizations o ON o.id = b.assay_center_id
-        JOIN bullion_intake_items selected ON selected.batch_id = b.id
-        WHERE selected.id = ${sampleId}::uuid AND selected.assigned_chemist_id = ${user.id}::uuid
-          AND b.assay_center_id = ${user.organizationId}::uuid AND b.status = 'sample_taken'
+        WHERE b.id = ${batchId}::uuid AND b.assay_center_id = ${user.organizationId}::uuid AND b.status = 'sample_taken'
           AND o.type IN ('private_assay_center', 'government_assay_center')
       ), existing AS MATERIALIZED (
         SELECT c.* FROM bullion_certificates c JOIN batch b ON b.id = c.batch_id
       ), results AS MATERIALIZED (
         SELECT i.sequence_no, i.sample_weight_milligrams > 0 AND i.gross_weight_after_grams IS NOT NULL
-          AND e.status IN ('submitted', 'approved') AND e.gold_result IS NOT NULL AND e.silver_result IS NOT NULL
+          AND e.status = 'approved' AND e.gold_result IS NOT NULL AND e.silver_result IS NOT NULL
           AND e.measurement_entries->1->>'reading' IS NOT NULL
           AND e.measurement_entries->2->>'reading' IS NOT NULL
           AND e.measurement_entries->3->>'reading' IS NOT NULL AS ready,

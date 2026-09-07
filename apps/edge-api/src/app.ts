@@ -56,10 +56,8 @@ edgeApi.use("/v1/*", async (c, next) => {
   if (user.role === "chemist") {
     const allowed = (path === "/api/v1/bullion/samples" && method === "GET")
       || (path === "/api/v1/bullion/examinations" && method === "POST")
-      || (/^\/api\/v1\/bullion\/samples\/[0-9a-f-]+\/print-chemists$/.test(path) && method === "GET")
       || (/^\/api\/v1\/bullion\/samples\/[0-9a-f-]+\/substitute-chemists$/.test(path) && method === "GET")
-      || (/^\/api\/v1\/bullion\/samples\/[0-9a-f-]+\/substitute$/.test(path) && method === "POST")
-      || (/^\/api\/v1\/bullion\/samples\/[0-9a-f-]+\/print$/.test(path) && method === "POST");
+      || (/^\/api\/v1\/bullion\/samples\/[0-9a-f-]+\/substitute$/.test(path) && method === "POST");
     if (!allowed) return c.json({ ok: false, message: "Энэ хэсэгт хандах эрхгүй." }, 403);
   }
   if (user.role === "intake_officer") {

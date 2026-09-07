@@ -63,7 +63,7 @@ export function bomPublicationStatement(bullionItemId: string) {
       certificate_id, batch_id, assay_center_id, certificate_no, approved_at, payload, payload_hash
     )
     SELECT certificate_id, batch_id, assay_center_id, certificate_no, approved_at, document,
-      encode(digest(convert_to(document::text, 'UTF8'), 'sha256'), 'hex')
+      encode(sha256(convert_to(document::text, 'UTF8')), 'hex')
     FROM payload
     ON CONFLICT (certificate_id) DO NOTHING
   `;

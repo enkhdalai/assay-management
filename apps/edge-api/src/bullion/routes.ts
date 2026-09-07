@@ -16,8 +16,8 @@ import { formatBullionNumber } from "../../../../packages/shared/src/bullion-num
 import { isCenterManager } from "../../../../packages/shared/src/workspace-access";
 import type { AnonymousSample } from "../../../../packages/shared/src/bullion-types";
 import { calculateBullion, BULLION_CALCULATION_VERSION } from "../../../../packages/shared/src/bullion-calculation";
-import { requestCertificate } from "./certificates";
-import { bomPublicationStatement } from "../bom/publications";
+import { issueCertificate } from "./certificates";
+import { publishBomCertificateIfReady } from "../bom/publications";
 
 export const bullionRoutes = new Hono<{ Bindings: EdgeApiEnv }>();
 
@@ -82,7 +82,7 @@ bullionRoutes.get("/samples", async (c) => {
   if (!user) return c.json({ ok: false }, 401);
   if (!EXAMINATION_ROLES.has(user.role)) return c.json({ ok: false }, 403);
   const samples = await listSamples(c.env, user);
-  return c.json({ ok: true, data: user.role === "chemist" ? samples.filter((sample) => sample.status !== "approved") : samples });
+  return c.json({ ok: true, data: user.role === "chemist" ? samples.filter((sample) => ["pending", "draft"].includes(sample.status)) : samples });
 });
 
 bullionRoutes.post("/samples/:id/approve", async (c) => {
@@ -127,26 +127,69 @@ bullionRoutes.post("/samples/:id/approve", async (c) => {
       )
       SELECT id FROM approved
     `),
-    db.execute(bomPublicationStatement(id)),
   ]);
   if (!readRows(result[1]).length) return c.json({ ok: false, message: "Шинжилгээ баталгаажуулах боломжгүй байна." }, 409);
   return c.json({ ok: true });
 });
 
-bullionRoutes.get("/samples/:id/print-chemists", async (c) => {
+bullionRoutes.post("/batches/:id/finalize", async (c) => {
   const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
   if (!user) return c.json({ ok: false }, 401);
-  if (user.role !== "chemist") return c.json({ ok: false }, 403);
-  const sample = (await listSamples(c.env, user)).find((s) => s.id === c.req.param("id"));
-  if (!sample) return c.json({ ok: false }, 404);
-  if (!c.env.DATABASE_URL) return c.json({ ok: false, message: "Хэвлэхэд өгөгдлийн сан шаардлагатай." }, 503);
-  const data = readRows(await createDatabase(c.env.DATABASE_URL).execute(sql`
-    SELECT u.id, u.full_name AS "fullName" FROM users u
-    JOIN bullion_intake_batches b ON b.assay_center_id = u.organization_id
-    JOIN bullion_intake_items i ON i.batch_id = b.id
-    WHERE i.id = ${sample.id} AND u.role = 'chemist' AND u.status = 'active' ORDER BY u.full_name, u.id
+  if (!isCenterManager(user.role)) return c.json({ ok: false, message: "Эцсийн гэрчилгээ батлах эрхгүй байна." }, 403);
+  const batchId = c.req.param("id");
+  if (!isUuid(batchId)) return c.json({ ok: false }, 400);
+  if (!c.env.DATABASE_URL) return c.json({ ok: false, message: "Гэрчилгээ батлахад өгөгдлийн сан шаардлагатай." }, 503);
+
+  const db = createDatabase(c.env.DATABASE_URL);
+  const certificate = await issueCertificate(db, user, batchId);
+  if (!certificate) return c.json({ ok: false, message: "Бүх гулдмайн шинжилгээг LE баталсны дараа эцсийн гэрчилгээ батална." }, 409);
+  const [item] = readRows(await db.execute<{ id: string }>(sql`
+    SELECT id FROM bullion_intake_items WHERE batch_id = ${batchId}::uuid ORDER BY sequence_no LIMIT 1
   `));
-  return c.json({ ok: true, data });
+  if (item) await publishBomCertificateIfReady(db, item.id);
+  return c.json({ ok: true, data: certificate });
+});
+
+bullionRoutes.post("/batches/:id/archive-print", async (c) => {
+  const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
+  if (!user) return c.json({ ok: false }, 401);
+  if (!isCenterManager(user.role)) return c.json({ ok: false, message: "Архивын тайлан хэвлэх эрхгүй байна." }, 403);
+  const batchId = c.req.param("id");
+  if (!isUuid(batchId)) return c.json({ ok: false }, 400);
+  if (!c.env.DATABASE_URL) return c.json({ ok: false, message: "Тайлан хэвлэхэд өгөгдлийн сан шаардлагатай." }, 503);
+  const [report] = readRows(await createDatabase(c.env.DATABASE_URL).execute(sql`
+    SELECT customer.display_name AS "customerName", center.name AS "centerName", center.type AS "centerType",
+      batch.public_id AS "registrationNo", batch.metal, batch.received_at AS "receivedAt",
+      certificate.issue_year AS "certificateYear", certificate.sequence_no AS "certificateSequence", certificate.issued_at AS "issuedAt",
+      certificate.entries,
+      (SELECT CASE WHEN count(DISTINCT chemist.full_name) = 1 THEN min(chemist.full_name) ELSE 'Олон химич' END
+        FROM bullion_intake_items item
+        JOIN LATERAL (SELECT entered_by_user_id FROM bullion_examination_revisions
+          WHERE bullion_item_id = item.id ORDER BY revision_no DESC LIMIT 1) examination ON true
+        JOIN users chemist ON chemist.id = examination.entered_by_user_id
+        WHERE item.batch_id = batch.id) AS "chemistName",
+      (SELECT CASE WHEN count(*) = 1 THEN min(manager.full_name) END FROM users manager
+        WHERE manager.organization_id = batch.assay_center_id AND manager.role = 'lab_manager' AND manager.status = 'active') AS "managerName"
+    FROM bullion_intake_batches batch
+    JOIN customers customer ON customer.id = batch.customer_id
+    JOIN organizations center ON center.id = batch.assay_center_id
+    JOIN bullion_certificates certificate ON certificate.batch_id = batch.id
+    WHERE batch.id = ${batchId}::uuid AND batch.assay_center_id = ${user.organizationId}::uuid
+    LIMIT 1
+  `));
+  if (!report) return c.json({ ok: false, message: "Эцсийн гэрчилгээ батлагдаагүй байна." }, 409);
+  const certificateNo = String(report.certificateSequence).padStart(4, "0");
+  await appendAuditLog(createDatabase(c.env.DATABASE_URL), user, "bullion_certificate.archive_print_requested", "bullion_intake_batches", batchId,
+    { certificateNo, certificateYear: report.certificateYear });
+  c.header("Cache-Control", "no-store");
+  return c.json({ ok: true, data: {
+    customerName: report.customerName, centerName: report.centerName, centerType: report.centerType,
+    bullionNo: "", bullionWeightGrams: 0, origin: null, registrationNo: report.registrationNo,
+    chemistName: report.chemistName, managerName: report.managerName, printedAt: new Date().toISOString(),
+    sample: { id: batchId, analysisNo: "", metal: report.metal, receivedAt: report.receivedAt, sampleWeightMilligrams: 0,
+      delta: 0, revisionNo: 0, status: "approved", examination: null },
+    certificateNo, issuedAt: report.issuedAt, entries: report.entries,
+  } });
 });
 
 bullionRoutes.get("/samples/:id/substitute-chemists", async (c) => {
@@ -215,45 +258,6 @@ bullionRoutes.post("/samples/:id/substitute", async (c) => {
   return c.json({ ok: true });
 });
 
-bullionRoutes.post("/samples/:id/print", async (c) => {
-  const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
-  if (!user) return c.json({ ok: false }, 401);
-  if (user.role !== "chemist") return c.json({ ok: false }, 403);
-  const sample = (await listSamples(c.env, user)).find((s) => s.id === c.req.param("id"));
-  if (!sample) return c.json({ ok: false }, 404);
-  if (sample.status !== "submitted") return c.json({ ok: false, message: "Эхлээд дүнг хяналтад илгээнэ үү." }, 409);
-  if (!c.env.DATABASE_URL) return c.json({ ok: false, message: "Хэвлэхэд өгөгдлийн сан шаардлагатай." }, 503);
-  const body = object(await c.req.json().catch(() => null));
-  const chemistId = text(body.chemistId) || user.id;
-  if (!isUuid(chemistId)) return c.json({ ok: false }, 400);
-  const db = createDatabase(c.env.DATABASE_URL);
-  const report = readRows(await db.execute(sql`
-    SELECT c.display_name AS "customerName", o.name AS "centerName", o.type AS "centerType", o.metadata AS "printMetadata", i.bullion_no AS "bullionNo",
-      i.gross_weight_after_grams::float AS "bullionWeightGrams", b.dispatch_reference AS "origin", b.public_id AS "registrationNo",
-      u.full_name AS "chemistName",
-      (SELECT CASE WHEN count(*) = 1 THEN min(manager.full_name) END FROM users manager
-        WHERE manager.organization_id = b.assay_center_id AND manager.role = 'lab_manager'
-          AND manager.status = 'active') AS "managerName"
-    FROM bullion_intake_items i JOIN bullion_intake_batches b ON b.id = i.batch_id
-    JOIN customers c ON c.id = b.customer_id JOIN organizations o ON o.id = b.assay_center_id
-    JOIN users u ON u.id = ${chemistId} AND u.organization_id = b.assay_center_id AND u.status = 'active'
-    WHERE i.id = ${sample.id} AND (u.role = 'chemist' OR u.id = ${user.id})
-      AND (${user.role} = 'system_admin' OR b.assay_center_id = ${user.organizationId})
-      AND (${user.role} <> 'chemist' OR i.assigned_chemist_id = ${user.id})
-  `))[0];
-  if (!report) return c.json({ ok: false, message: "Хэвлэх химичийг зөв сонгоно уу." }, 400);
-  const schema = readRows(await db.execute<{ ready: boolean }>(sql`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'bullion_certificates' AND column_name = 'issue_year') AS ready`))[0];
-  if (!schema?.ready) return c.json({ ok: false, message: "Нэгдсэн сорилтын дүн хэвлэхийн өмнө өгөгдлийн сангийн шинэчлэл (0004, 0005) хийх шаардлагатай." }, 503);
-  const certificate = await requestCertificate(db, user, sample.id);
-  if (!certificate) return c.json({ ok: false, message: "Энэ хүсэлтийн бүх дээжийн шинжилгээний дүнг хяналтад илгээсний дараа нэгдсэн сорилтын дүнг хэвлэнэ үү. Төвийн дугаарлалтын тохиргоог мөн шалгана уу." }, 409);
-  const data = { ...report, sample, certificateNo: certificate.certificateNo, entries: certificate.entries,
-    certificateYear: certificate.issueYear, issuedAt: certificate.issuedAt, printedAt: new Date().toISOString() };
-  await appendAuditLog(db, user, "bullion_examination.print_requested", "bullion_intake_items", sample.id,
-    { revisionNo: sample.revisionNo, printedByUserId: user.id, selectedChemistId: chemistId, report: data });
-  c.header("Cache-Control", "no-store");
-  return c.json({ ok: true, data });
-});
-
 async function listSamples(env: EdgeApiEnv, user: AuthenticatedUser): Promise<AnonymousSample[]> {
   if (!env.DATABASE_URL) return visibleBatches(user).flatMap((batch) => batch.items
     .filter((item) => batch.status === "sample_taken" && (item.sampleWeightMilligrams ?? 0) > 0
@@ -261,9 +265,19 @@ async function listSamples(env: EdgeApiEnv, user: AuthenticatedUser): Promise<An
     .map((item) => {
       const revision = memoryExaminations.get(item.id);
       const substitution = memorySubstitutions.get(item.id);
+      const batchProgress = batch.items.reduce<Map<string, { chemistId: string; chemistName: string; assignedCount: number; completedCount: number; completedAt: string | null }>>((progress, record) => {
+        if (!record.assignedChemistId || !record.assignedChemistName) return progress;
+        const current = progress.get(record.assignedChemistId) ?? { chemistId: record.assignedChemistId, chemistName: record.assignedChemistName, assignedCount: 0, completedCount: 0, completedAt: null };
+        const examination = memoryExaminations.get(record.id);
+        current.assignedCount += 1;
+        if (examination?.input.status === "submitted") { current.completedCount += 1; current.completedAt = examination.submittedAt; }
+        progress.set(record.assignedChemistId, current);
+        return progress;
+      }, new Map());
       return { id: item.id, analysisNo: item.analysisNo!, metal: batch.metal,
         ...(isCenterManager(user.role) ? { batchId: batch.id, assignedChemistId: item.assignedChemistId ?? null, assignedChemistName: item.assignedChemistName ?? null,
-          assignedAt: item.assignedAt ?? null, completedAt: revision?.submittedAt ?? null } : {}),
+          assignedAt: item.assignedAt ?? null, completedAt: revision?.submittedAt ?? null,
+          batchProgress: [...batchProgress.values()], batchReadyForFinalization: false, certificateNo: null } : {}),
         ...(substitution?.recipientId === user.id ? { substitutedByName: substitution.byName, substitutedAt: substitution.transferredAt } : {}),
         receivedAt: batch.receivedAt || batch.createdAt, sampleWeightMilligrams: item.sampleWeightMilligrams!,
         delta: batch.delta ?? -0.03125, revisionNo: revision?.revisionNo ?? 0,
@@ -276,6 +290,26 @@ async function listSamples(env: EdgeApiEnv, user: AuthenticatedUser): Promise<An
       i.examination_number::text AS "analysisNo", b.metal,
       b.received_at AS "receivedAt", i.sample_weight_milligrams::float AS "sampleWeightMilligrams",
       b.delta::float AS delta, COALESCE(e.revision_no, 0) AS "revisionNo", COALESCE(e.status::text, 'pending') AS status,
+      COALESCE((SELECT json_agg(json_build_object(
+        'chemistId', timeline."chemistId", 'chemistName', timeline."chemistName", 'assignedCount', timeline."assignedCount",
+        'completedCount', timeline."completedCount", 'completedAt', timeline."completedAt") ORDER BY timeline."chemistName")
+        FROM (
+          SELECT u.id AS "chemistId", u.full_name AS "chemistName", count(*)::int AS "assignedCount",
+            count(*) FILTER (WHERE latest.status IN ('submitted', 'approved'))::int AS "completedCount",
+            max(latest.submitted_at)::text AS "completedAt"
+          FROM bullion_intake_items batch_item
+          JOIN users u ON u.id = batch_item.assigned_chemist_id
+          LEFT JOIN LATERAL (SELECT status, submitted_at FROM bullion_examination_revisions
+            WHERE bullion_item_id = batch_item.id ORDER BY revision_no DESC LIMIT 1) latest ON true
+          WHERE batch_item.batch_id = b.id
+          GROUP BY u.id, u.full_name
+        ) timeline), '[]'::json) AS "batchProgress",
+      NOT EXISTS (SELECT 1 FROM bullion_intake_items batch_item
+        LEFT JOIN LATERAL (SELECT status FROM bullion_examination_revisions
+          WHERE bullion_item_id = batch_item.id ORDER BY revision_no DESC LIMIT 1) latest ON true
+        WHERE batch_item.batch_id = b.id AND COALESCE(latest.status::text, 'draft') <> 'approved') AS "batchReadyForFinalization",
+      (SELECT lpad(sequence_no::text, GREATEST(4, length(sequence_no::text)), '0') FROM bullion_certificates
+        WHERE batch_id = b.id LIMIT 1) AS "certificateNo",
       CASE WHEN e.id IS NULL THEN NULL ELSE json_build_object(
         'bullionItemId', i.id, 'examinationNo', i.examination_number::text, 'sampleWeightGrams', e.sample_weight_grams::float,
         'delta', e.delta::float, 'status', e.status, 'weightEntries', e.weight_entries,
@@ -296,10 +330,14 @@ async function listSamples(env: EdgeApiEnv, user: AuthenticatedUser): Promise<An
     ORDER BY b.received_at DESC, i.sequence_no
   `);
   return readRows(result).map((sample) => {
+    if (typeof sample.batchProgress === "string") {
+      try { sample.batchProgress = JSON.parse(sample.batchProgress); } catch { sample.batchProgress = []; }
+    }
     if (isCenterManager(user.role)) return sample;
     const anonymous = { ...sample };
     delete anonymous.batchId; delete anonymous.assignedChemistId; delete anonymous.assignedChemistName;
     delete anonymous.assignedAt; delete anonymous.completedAt;
+    delete anonymous.batchProgress; delete anonymous.batchReadyForFinalization; delete anonymous.certificateNo;
     return anonymous;
   });
 }

@@ -112,6 +112,6 @@ test("melter intake, LE sampling, anonymous chemistry, and reports respect cente
   assert(substituteChoices.some((choice) => choice.id === substitute.user.id));
   assert.equal((await request(`/api/v1/bullion/samples/${itemId}/substitute`, chemist.cookie, "POST", { chemistId: substitute.user.id })).status, 200);
   assert.equal((await (await request("/api/v1/bullion/samples", chemist.cookie)).json()).data.length, 0);
-  assert.equal((await (await request("/api/v1/bullion/samples", substitute.cookie)).json()).data.length, 1);
-  assert.equal((await request(`/api/v1/bullion/samples/${itemId}/print`, chemist.cookie, "POST", {})).status, 404);
+  assert.equal((await (await request("/api/v1/bullion/samples", substitute.cookie)).json()).data.length, 0);
+  assert.equal((await request(`/api/v1/bullion/samples/${itemId}/print`, chemist.cookie, "POST", {})).status, 403);
 });

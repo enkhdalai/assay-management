@@ -81,6 +81,15 @@ export type AnonymousSample = {
   completedAt?: string | null;
   substitutedByName?: string | null;
   substitutedAt?: string | null;
+  batchProgress?: Array<{
+    chemistId: string;
+    chemistName: string;
+    assignedCount: number;
+    completedCount: number;
+    completedAt: string | null;
+  }>;
+  batchReadyForFinalization?: boolean;
+  certificateNo?: string | null;
   id: string;
   analysisNo: string;
   metal: MetalType;

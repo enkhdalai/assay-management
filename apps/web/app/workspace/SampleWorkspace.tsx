@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { Plus, Minus, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, Minus, ChevronLeft, ChevronRight, CircleCheck } from "lucide-react";
 import type { AnonymousSample, SubmitBullionExaminationInput } from "../../../../packages/shared/src/bullion-types";
 import { WorkspaceDialog } from "../OperationalWorkspace";
 import { api } from "./api";
@@ -78,7 +78,7 @@ export function SampleWorkspace({ manager = false, centerType }: { manager?: boo
   </section>;
   return <section className="workspace-section"><div className="workspace-toolbar"><input aria-label="Дээж хайх" placeholder="Шинжилгээний дугаараар хайх" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} />{manager && <select aria-label="Төлөв" value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }}><option value="all">Бүх төлөв</option>{Object.entries(statusLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>}<button className="secondary-button" disabled={loading} onClick={refresh} type="button">Шинэчлэх</button></div>
     {error && <p className="login-error" role="alert">{error}</p>}
-{loading ? <WorkspaceLoadingSkeleton /> : <div className="workspace-table-scroll"><table className="workspace-table"><thead><tr><th>№</th><th>Шинжилгээ №</th><th>Огноо</th><th>Металл</th><th>Дээжийн жин /мг/</th>{!manager && <th>Хувилбар</th>}{manager && <><th>Хариуцсан химич</th><th>Химичид хуваарилсан огноо</th><th>Шинжилгээ дууссан огноо</th></>}<th>Төлөв</th></tr></thead><tbody>{pageSamples.map((sample, index) => <tr key={sample.id} className={manager ? "manager-sample-row" : "chemist-sample-row"} tabIndex={manager ? 0 : undefined}
+{loading ? <WorkspaceLoadingSkeleton /> : <div className="workspace-table-scroll"><table className="workspace-table"><thead><tr><th>№</th><th>Шинжилгээ №</th><th>Огноо</th><th>Металл</th><th>Дээжийн жин /мг/</th>{!manager && <th>Хувилбар</th>}{manager && <><th>Хариуцсан химич</th><th>Химичдийн явц</th><th>Химичид хуваарилсан огноо</th><th>Шинжилгээ дууссан огноо</th></>}<th>Төлөв</th></tr></thead><tbody>{pageSamples.map((sample, index) => <tr key={sample.id} className={manager ? "manager-sample-row" : "chemist-sample-row"} tabIndex={manager ? 0 : undefined}
   onClick={manager ? () => setSelected(sample) : undefined}
   onKeyDown={manager ? (event) => {
     if ((event.key !== "Enter" && event.key !== " ") || (event.target instanceof HTMLElement && event.target.closest("button, input, select, a"))) return;
@@ -86,7 +86,7 @@ export function SampleWorkspace({ manager = false, centerType }: { manager?: boo
   } : undefined}>
   <td>{offset + index + 1}</td><td><button className={`workspace-link${manager ? " sample-number-button" : ""}`} type="button" onClick={() => setSelected(sample)}>{examinationNumber(sample.analysisNo)}</button></td>
   <td>{workflowDate(sample.receivedAt, false)}</td><td>{sample.metal === "gold" ? "Алт" : "Мөнгө"}</td><td>{sample.sampleWeightMilligrams.toLocaleString()}</td>
-  {!manager && <td>{sample.revisionNo || "-"}</td>}{manager && <><td><ChemistPicker sample={sample} onSaved={refresh} /></td>
+  {!manager && <td>{sample.revisionNo || "-"}</td>}{manager && <><td><ChemistPicker sample={sample} onSaved={refresh} /></td><td><BatchTimeline sample={sample} /></td>
     <td className="sample-workflow-date">{sample.assignedAt ? <time dateTime={sample.assignedAt}>{workflowDate(sample.assignedAt)}</time> : "-"}</td>
     <td className="sample-workflow-date">{sample.completedAt ? <time dateTime={sample.completedAt}>{workflowDate(sample.completedAt)}</time> : "-"}</td></>}
   <td>{statusLabels[sample.status] ?? sample.status}</td></tr>)}</tbody></table>{filtered.length === 0 && <p>Дээж олдсонгүй.</p>}</div>}
@@ -98,6 +98,17 @@ export function SampleWorkspace({ manager = false, centerType }: { manager?: boo
     </nav>}
     {selected && <SampleDialog key={manager ? `${selected.id}:${selected.revisionNo}:${selected.status}` : selected.id} manager={manager} centerType={centerType} sample={selected} onClose={() => setSelected(null)} onSaved={() => { setSelected(null); void refresh(); }} />}
   </section>;
+}
+
+function BatchTimeline({ sample }: { sample: AnonymousSample }) {
+  const progress = sample.batchProgress ?? [];
+  if (!progress.length) return "-";
+  return <div className="batch-timeline" aria-label="Химичдийн явц">{progress.map((chemist) => {
+    const complete = chemist.assignedCount > 0 && chemist.completedCount === chemist.assignedCount;
+    return <span key={chemist.chemistId} className={complete ? "timeline-complete" : "timeline-pending"} title={`${chemist.chemistName}: ${chemist.completedCount}/${chemist.assignedCount}`}>
+      {complete ? <CircleCheck size={17} aria-hidden="true" /> : <i aria-hidden="true" />}<span>{chemist.chemistName} {chemist.completedCount}/{chemist.assignedCount}</span>
+    </span>;
+  })}</div>;
 }
 
 function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded = false }: { sample: AnonymousSample; manager: boolean; centerType?: string; onClose(): void; onSaved(): void; embedded?: boolean }) {
@@ -186,19 +197,33 @@ function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded 
     try { await api(`/api/v1/bullion/samples/${sample.id}/approve`, { method: "POST", body: JSON.stringify({}) }); onSaved(); }
     catch (error) { setError((error as Error).message); } finally { setSaving(false); }
   }
+  async function finalizeCertificate() {
+    if (!sample.batchId) return;
+    setSaving(true); setError("");
+    try { await api(`/api/v1/bullion/batches/${sample.batchId}/finalize`, { method: "POST", body: JSON.stringify({}) }); onSaved(); }
+    catch (error) { setError((error as Error).message); } finally { setSaving(false); }
+  }
+  async function printArchiveReport() {
+    if (!sample.batchId) return;
+    const popup = window.open("", "_blank");
+    if (!popup) { setError("Хэвлэх цонх хаагдсан байна. Pop-up зөвшөөрөөд дахин оролдоно уу."); return; }
+    setSaving(true); setError("");
+    try {
+      const { data } = await api<{ data: ExaminationPrintData }>(`/api/v1/bullion/batches/${sample.batchId}/archive-print`, { method: "POST", body: JSON.stringify({}) });
+      await printExamination(popup, { ...data, centerType: data.centerType ?? centerType });
+    } catch (error) { popup.close(); setError((error as Error).message); } finally { setSaving(false); }
+  }
   const measurements = ["Чек мөнгө", "Дээжийн үлдэгдэл жин", "Шинжилгээний хорогдол", "Королько, корточка"];
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setError("");
     const action = (event.nativeEvent as SubmitEvent).submitter?.getAttribute("value");
-    const printing = action === "print";
+    const sendingForApproval = action === "submit";
     const form = new FormData(event.currentTarget);
-    const status = printing ? "submitted" : "draft";
+    const status = sendingForApproval ? "submitted" : "draft";
     const calculated = editable ? calculate(form) : null;
-    if (printing && calculated && (calculated.errors.length || calculated.goldResult == null || calculated.silverResult == null)) {
+    if (sendingForApproval && calculated && (calculated.errors.length || calculated.goldResult == null || calculated.silverResult == null)) {
       setError(calculated.errors.join(" ") || "Мөнгөний сорьц бодох Нэмэлт мөрийг оруулна уу."); return;
     }
-    const popup = printing ? window.open("", "_blank") : null;
-    if (printing && !popup) { setError("Хэвлэх цонх хаагдсан байна. Pop-up зөвшөөрөөд дахин оролдоно уу."); return; }
     setSaving(true);
     const input: SubmitBullionExaminationInput = {
       bullionItemId: sample.id, examinationNo: sample.analysisNo, expectedRevision: sample.revisionNo,
@@ -209,14 +234,10 @@ function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded 
       goldResult: calculated?.goldResult, silverResult: calculated?.silverResult, notes: String(form.get("notes") || ""), reexaminationRequested: form.get("reexaminationRequested") === "on",
     };
     try {
-      if (editable) { await api("/api/v1/bullion/examinations", { method: "POST", body: JSON.stringify(input) }); setHasUnsavedChanges(false); if (printing) setSubmitted(true); }
-      if (printing && popup) {
-        const { data } = await api<{ data: ExaminationPrintData }>(`/api/v1/bullion/samples/${sample.id}/print`, { method: "POST", body: JSON.stringify({}) });
-        await printExamination(popup, { ...data, centerType: data.centerType ?? centerType });
-      }
+      if (editable) { await api("/api/v1/bullion/examinations", { method: "POST", body: JSON.stringify(input) }); setHasUnsavedChanges(false); if (sendingForApproval) setSubmitted(true); }
       onSaved();
     }
-    catch (error) { popup?.close(); setError((error as Error).message); } finally { setSaving(false); }
+    catch (error) { setError((error as Error).message); } finally { setSaving(false); }
   }
   const content = <>
     <dl className="examination-metadata">
@@ -272,12 +293,12 @@ function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded 
       </fieldset>
       <div className="examination-actions">
         {!manager && sample.substitutedByName && sample.substitutedAt && <span className="substitute-notice">Шилжүүлсэн химич: <strong>{sample.substitutedByName}</strong> · <time dateTime={sample.substitutedAt}>{workflowDate(sample.substitutedAt)}</time></span>}
-        {manager ? (sample.status === "submitted" && <button className="primary-button" type="button" disabled={saving} onClick={() => void approve()}>Баталгаажуулах</button>) : <>
+        {manager ? <>{sample.status === "submitted" && <button className="primary-button" type="button" disabled={saving} onClick={() => void approve()}>Баталгаажуулах</button>}{sample.batchReadyForFinalization && !sample.certificateNo && <button className="primary-button" type="button" disabled={saving} onClick={() => void finalizeCertificate()}>Эцсийн гэрчилгээ батлах</button>}{sample.certificateNo && <><span className="certificate-ready">Гэрчилгээ № {sample.certificateNo}</span><button className="secondary-button" type="button" disabled={saving} onClick={() => void printArchiveReport()}>Архивын тайлан хэвлэх</button></>}</> : <>
         <button className="secondary-button" type="button" disabled={saving || !editable || !canCalculate} onClick={checkCalculation}>Бодолт</button>
         <button className="secondary-button" type="button" disabled={saving || !editable || !canCalculate} onClick={checkCalculation}>Шалгах</button>
         <button className="primary-button" type="submit" value="draft" disabled={saving || !editable}>Хадгалах</button>
-        <button className="secondary-button" type="submit" value="print" disabled={saving || (!editable && !submitted)}>Хэвлэх</button>
-        <button className="secondary-button" type="button" disabled={saving || (!editable && !submitted)} title={!examination || hasUnsavedChanges ? "Эхлээд дүнг хадгална уу." : "Орлогч химич томилох"} onClick={chooseSubstituteChemist}>Орлогч томилох</button>
+        <button className="primary-button" type="submit" value="submit" disabled={saving || !editable}>Хяналтад илгээх</button>
+        <button className="secondary-button" type="button" disabled={saving || !editable} title={!examination || hasUnsavedChanges ? "Эхлээд дүнг хадгална уу." : "Орлогч химич томилох"} onClick={chooseSubstituteChemist}>Орлогч томилох</button>
         </>}
         {!embedded && <button className="secondary-button" type="button" disabled={saving} onClick={onClose}>Хаах</button>}
       </div>
