@@ -5,14 +5,32 @@ import { Plus, Minus, ChevronLeft, ChevronRight, CircleCheck } from "lucide-reac
 import type { AnonymousSample, SubmitBullionExaminationInput } from "../../../../packages/shared/src/bullion-types";
 import { WorkspaceDialog } from "../OperationalWorkspace";
 import { api } from "./api";
-import { ChemistPicker } from "./ChemistPicker";
 import { printExamination, type ExaminationPrintData } from "./printExamination";
 import { calculateBullion, BULLION_CALCULATION_VERSION } from "../../../../packages/shared/src/bullion-calculation";
 import { WorkspaceLoadingSkeleton } from "./WorkspaceLoadingSkeleton";
 
 const statusLabels: Record<string, string> = { pending: "Хүлээгдэж байна", draft: "Шинжилгээнд", submitted: "Эрхлэгчийн хяналтад", approved: "Баталгаажсан", rejected: "Буцаасан", superseded: "Өмнөх хувилбар" };
+type ManagerBatch = {
+  id: string;
+  customerName: string;
+  registrationNo: string;
+  metal: AnonymousSample["metal"];
+  receivedAt: string;
+  samples: AnonymousSample[];
+  status: string;
+  batchProgress: NonNullable<AnonymousSample["batchProgress"]>;
+  assignedAt: string | null;
+  completedAt: string | null;
+};
 const examinationNumber = (value: string) => value.padStart(4, "0");
+function batchStatus(samples: AnonymousSample[]) {
+  if (samples.every((sample) => sample.status === "approved")) return "approved";
+  if (samples.some((sample) => sample.status === "submitted")) return "submitted";
+  if (samples.some((sample) => sample.status === "draft")) return "draft";
+  return "pending";
+}
 const workflowDateFormatter = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Ulaanbaatar", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+const utcDateFormatter = new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 function workflowDate(value?: string | null, includeTime = true) {
   if (!value || !Number.isFinite(Date.parse(value))) return "-";
   const parts = workflowDateFormatter.formatToParts(new Date(value));
@@ -20,10 +38,24 @@ function workflowDate(value?: string | null, includeTime = true) {
   const date = `${part("year")}-${part("month")}-${part("day")}`;
   return includeTime ? `${date} ${part("hour")}:${part("minute")}` : date;
 }
+function approvalDate(value?: string | null) {
+  if (!value) return "-";
+  const isoValue = value.replace(" ", "T");
+  const normalized = /(?:Z|[+-]\d{2}(?::?\d{2})?)$/i.test(isoValue)
+    ? isoValue.replace(/([+-]\d{2})$/, "$1:00")
+    : `${isoValue}Z`;
+  const timestamp = Date.parse(normalized);
+  if (!Number.isFinite(timestamp)) return "-";
+  // Existing approval records were stored eight hours behind the laboratory clock.
+  const parts = utcDateFormatter.formatToParts(new Date(timestamp + 16 * 60 * 60 * 1000));
+  const part = (type: string) => parts.find(part => part.type === type)?.value;
+  return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}`;
+}
 
 export function SampleWorkspace({ manager = false, centerType }: { manager?: boolean; centerType?: string }) {
   const [samples, setSamples] = useState<AnonymousSample[]>([]);
   const [selected, setSelected] = useState<AnonymousSample | null>(null);
+  const [selectedBatch, setSelectedBatch] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
@@ -49,13 +81,30 @@ export function SampleWorkspace({ manager = false, centerType }: { manager?: boo
       window.clearInterval(timer);
     };
   }, [manager, refresh]);
-  const workflowTimestamp = (sample: AnonymousSample) => Date.parse(sample.completedAt ?? sample.assignedAt ?? sample.receivedAt) || 0;
-  const filtered = samples.filter((sample) => examinationNumber(sample.analysisNo).toLowerCase().includes(query.trim().toLowerCase()) && (!manager || status === "all" || status === sample.status))
-    .sort((left, right) => workflowTimestamp(right) - workflowTimestamp(left) || Number(right.analysisNo) - Number(left.analysisNo));
-  const pageCount = Math.max(1, Math.ceil(filtered.length / 25));
+  const grouped = new Map<string, AnonymousSample[]>();
+  if (manager) samples.forEach((sample) => {
+    if (!sample.batchId) return;
+    grouped.set(sample.batchId, [...(grouped.get(sample.batchId) ?? []), sample]);
+  });
+  const managerBatches: ManagerBatch[] = Array.from(grouped, ([id, batchSamples]) => {
+    const first = batchSamples[0];
+    return {
+      id, customerName: first.customerName ?? "-", registrationNo: first.registrationNo ?? "-", metal: first.metal,
+      receivedAt: first.receivedAt, samples: batchSamples, status: batchStatus(batchSamples), batchProgress: first.batchProgress ?? [],
+      assignedAt: batchSamples.map((sample) => sample.assignedAt).filter(Boolean).sort()[0] ?? null,
+      completedAt: batchSamples.map((sample) => sample.completedAt).filter(Boolean).sort().at(-1) ?? null,
+    };
+  });
+  const filteredBatches = managerBatches.filter((batch) => {
+    const needle = query.trim().toLowerCase();
+    return (!needle || batch.customerName.toLowerCase().includes(needle) || batch.registrationNo.toLowerCase().includes(needle) || batch.samples.some((sample) => examinationNumber(sample.analysisNo).includes(needle)))
+      && (status === "all" || status === batch.status);
+  }).sort((left, right) => Date.parse(right.completedAt ?? right.assignedAt ?? right.receivedAt) - Date.parse(left.completedAt ?? left.assignedAt ?? left.receivedAt));
+  const activeBatch = selectedBatch ? managerBatches.find((batch) => batch.id === selectedBatch) ?? null : null;
+  const pageCount = Math.max(1, Math.ceil(filteredBatches.length / 25));
   const currentPage = Math.min(page, pageCount);
   const offset = (currentPage - 1) * 25;
-  const pageSamples = filtered.slice(offset, offset + 25);
+  const pageBatches = filteredBatches.slice(offset, offset + 25);
   const chemistSamples = [...samples].sort((left, right) => {
     const newRequestOrder = Number(right.status === "pending") - Number(left.status === "pending");
     return newRequestOrder || Date.parse(right.receivedAt) - Date.parse(left.receivedAt) || Number(right.analysisNo) - Number(left.analysisNo);
@@ -76,32 +125,30 @@ export function SampleWorkspace({ manager = false, centerType }: { manager?: boo
       {!loading && !selected && !error && <p>Шинжилгээ сонгоно уу.</p>}
     </div>
   </section>;
-  return <section className="workspace-section"><div className="workspace-toolbar"><input aria-label="Дээж хайх" placeholder="Шинжилгээний дугаараар хайх" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} />{manager && <select aria-label="Төлөв" value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }}><option value="all">Бүх төлөв</option>{Object.entries(statusLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>}<button className="secondary-button" disabled={loading} onClick={refresh} type="button">Шинэчлэх</button></div>
+  return <section className="workspace-section"><div className="workspace-toolbar"><input aria-label="Дээж хайх" placeholder="Харилцагч, бүртгэл эсвэл шинжилгээний дугаараар хайх" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} />{manager && <select aria-label="Төлөв" value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }}><option value="all">Бүх төлөв</option>{Object.entries(statusLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>}<button className="secondary-button" disabled={loading} onClick={refresh} type="button">Шинэчлэх</button></div>
     {error && <p className="login-error" role="alert">{error}</p>}
-{loading ? <WorkspaceLoadingSkeleton /> : <div className="workspace-table-scroll"><table className="workspace-table"><thead><tr><th>№</th><th>Шинжилгээ №</th><th>Огноо</th><th>Металл</th><th>Дээжийн жин /мг/</th>{!manager && <th>Хувилбар</th>}{manager && <><th>Хариуцсан химич</th><th>Химичдийн явц</th><th>Химичид хуваарилсан огноо</th><th>Шинжилгээ дууссан огноо</th></>}<th>Төлөв</th></tr></thead><tbody>{pageSamples.map((sample, index) => <tr key={sample.id} className={manager ? "manager-sample-row" : "chemist-sample-row"} tabIndex={manager ? 0 : undefined}
-  onClick={manager ? () => setSelected(sample) : undefined}
-  onKeyDown={manager ? (event) => {
-    if ((event.key !== "Enter" && event.key !== " ") || (event.target instanceof HTMLElement && event.target.closest("button, input, select, a"))) return;
-    event.preventDefault(); setSelected(sample);
-  } : undefined}>
-  <td>{offset + index + 1}</td><td><button className={`workspace-link${manager ? " sample-number-button" : ""}`} type="button" onClick={() => setSelected(sample)}>{examinationNumber(sample.analysisNo)}</button></td>
-  <td>{workflowDate(sample.receivedAt, false)}</td><td>{sample.metal === "gold" ? "Алт" : "Мөнгө"}</td><td>{sample.sampleWeightMilligrams.toLocaleString()}</td>
-  {!manager && <td>{sample.revisionNo || "-"}</td>}{manager && <><td><ChemistPicker sample={sample} onSaved={refresh} /></td><td><BatchTimeline sample={sample} /></td>
-    <td className="sample-workflow-date">{sample.assignedAt ? <time dateTime={sample.assignedAt}>{workflowDate(sample.assignedAt)}</time> : "-"}</td>
-    <td className="sample-workflow-date">{sample.completedAt ? <time dateTime={sample.completedAt}>{workflowDate(sample.completedAt)}</time> : "-"}</td></>}
-  <td>{statusLabels[sample.status] ?? sample.status}</td></tr>)}</tbody></table>{filtered.length === 0 && <p>Дээж олдсонгүй.</p>}</div>}
-    {!loading && filtered.length > 0 && <nav className="sample-pagination" aria-label="Хуудаслалт">
-      <span>{offset + 1}–{Math.min(offset + 25, filtered.length)} / {filtered.length}</span>
+{loading ? <WorkspaceLoadingSkeleton /> : <div className="workspace-table-scroll"><table className="workspace-table"><thead><tr><th>№</th><th>Харилцагч</th><th>Бүртгэл №</th><th>Огноо</th><th>Металл</th><th>Гулдмай</th><th>Химичдийн явц</th><th>Хуваарилсан огноо</th><th>Дууссан огноо</th><th>Төлөв</th></tr></thead><tbody>{pageBatches.map((batch, index) => <tr key={batch.id} className="manager-sample-row" tabIndex={0} onClick={() => setSelectedBatch(batch.id)} onKeyDown={(event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault(); setSelectedBatch(batch.id);
+}}>
+  <td>{offset + index + 1}</td><td>{batch.customerName}</td><td>{batch.registrationNo}</td><td>{workflowDate(batch.receivedAt, false)}</td><td>{batch.metal === "gold" ? "Алт" : "Мөнгө"}</td><td>{batch.samples.length}</td>
+  <td><BatchTimeline progress={batch.batchProgress} /></td><td className="sample-workflow-date">{batch.assignedAt ? <time dateTime={batch.assignedAt}>{workflowDate(batch.assignedAt)}</time> : "-"}</td><td className="sample-workflow-date">{batch.completedAt ? <time dateTime={batch.completedAt}>{workflowDate(batch.completedAt)}</time> : "-"}</td><td><StatusBadge status={batch.status} /></td></tr>)}</tbody></table>{filteredBatches.length === 0 && <p>Дээж олдсонгүй.</p>}</div>}
+    {!loading && filteredBatches.length > 0 && <nav className="sample-pagination" aria-label="Хуудаслалт">
+      <span>{offset + 1}–{Math.min(offset + 25, filteredBatches.length)} / {filteredBatches.length}</span>
       <button type="button" className="secondary-button" aria-label="Өмнөх хуудас" title="Өмнөх хуудас" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}><ChevronLeft size={20} aria-hidden="true" /></button>
       <span>{currentPage} / {pageCount}</span>
       <button type="button" className="secondary-button" aria-label="Дараах хуудас" title="Дараах хуудас" disabled={currentPage === pageCount} onClick={() => setPage(currentPage + 1)}><ChevronRight size={20} aria-hidden="true" /></button>
     </nav>}
-    {selected && <SampleDialog key={manager ? `${selected.id}:${selected.revisionNo}:${selected.status}` : selected.id} manager={manager} centerType={centerType} sample={selected} onClose={() => setSelected(null)} onSaved={() => { setSelected(null); void refresh(); }} />}
+    {activeBatch && <BatchReviewDialog key={activeBatch.id} batch={activeBatch} centerType={centerType} onClose={() => setSelectedBatch(null)} onSaved={() => { setSelectedBatch(null); void refresh(); }} />}
   </section>;
 }
 
-function BatchTimeline({ sample }: { sample: AnonymousSample }) {
-  const progress = sample.batchProgress ?? [];
+function StatusBadge({ status }: { status: string }) {
+  const style = status === "approved" ? "active" : status === "submitted" ? "warning" : "neutral";
+  return <span className={`status-badge status-${style}`}>{statusLabels[status] ?? status}</span>;
+}
+
+function BatchTimeline({ progress }: { progress: NonNullable<AnonymousSample["batchProgress"]> }) {
   if (!progress.length) return "-";
   return <div className="batch-timeline" aria-label="Химичдийн явц">{progress.map((chemist) => {
     const complete = chemist.assignedCount > 0 && chemist.completedCount === chemist.assignedCount;
@@ -109,6 +156,31 @@ function BatchTimeline({ sample }: { sample: AnonymousSample }) {
       {complete ? <CircleCheck size={17} aria-hidden="true" /> : <i aria-hidden="true" />}<span>{chemist.chemistName} {chemist.completedCount}/{chemist.assignedCount}</span>
     </span>;
   })}</div>;
+}
+
+function ApprovalNotice({ sample }: { sample: AnonymousSample }) {
+  if (sample.status !== "approved" || !sample.approvedByName || !sample.approvedAt) return null;
+  return <span className="approval-notice">Баталгаажуулсан: <strong>{sample.approvedByName}</strong><time dateTime={sample.approvedAt}>{approvalDate(sample.approvedAt)}</time></span>;
+}
+
+function BatchReviewDialog({ batch, centerType, onClose, onSaved }: { batch: ManagerBatch; centerType?: string; onClose(): void; onSaved(): void }) {
+  const [activeSampleId, setActiveSampleId] = useState(batch.samples[0]?.id ?? "");
+  const activeSample = batch.samples.find((sample) => sample.id === activeSampleId) ?? batch.samples[0];
+  return <WorkspaceDialog size="examination" title={`${batch.customerName} · ${batch.registrationNo}`} headerActions={activeSample ? <ApprovalNotice sample={activeSample} /> : null} onClose={onClose}>
+    <section className="manager-review-workstation">
+      <aside className="chemist-sample-list" aria-label="Гулдмайн шинжилгээнүүд">
+        <h2>Гулдмайн №</h2>
+        <div className="chemist-sample-options" role="listbox" aria-label="Шинжилгээ сонгох">
+          {batch.samples.map((sample, index) => <button key={sample.id} type="button" role="option" aria-selected={activeSample?.id === sample.id} className="chemist-sample-option" onClick={() => setActiveSampleId(sample.id)}>
+            <span>{index + 1}</span><strong>{sample.bullionNo ?? String(index + 1).padStart(4, "0")}</strong><StatusBadge status={sample.status} />
+          </button>)}
+        </div>
+      </aside>
+      <div className="chemist-form-panel">
+        {activeSample && <SampleDialog key={`${activeSample.id}:${activeSample.revisionNo}:${activeSample.status}`} embedded manager centerType={centerType} sample={activeSample} onClose={onClose} onSaved={onSaved} />}
+      </div>
+    </section>
+  </WorkspaceDialog>;
 }
 
 function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded = false }: { sample: AnonymousSample; manager: boolean; centerType?: string; onClose(): void; onSaved(): void; embedded?: boolean }) {
@@ -243,7 +315,7 @@ function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded 
     <dl className="examination-metadata">
       <div><dt>Огноо</dt><dd>{workflowDate(sample.receivedAt, false)}</dd></div>
       <div><dt>Дээжийн жин /мг/</dt><dd>{sample.sampleWeightMilligrams}</dd></div>
-      <div><dt>Шинжилгээний №</dt><dd>{examinationNumber(sample.analysisNo)}</dd></div>
+      <div><dt>{manager ? "Гулдмайн №" : "Шинжилгээний №"}</dt><dd>{manager ? sample.bullionNo ?? "-" : examinationNumber(sample.analysisNo)}</dd></div>
       <div><dt>Делта</dt><dd>{sample.delta}</dd></div>
     </dl>
     <form ref={formRef} className="workspace-form examination-form" autoComplete="off" onSubmit={submit}><fieldset disabled={saving}>

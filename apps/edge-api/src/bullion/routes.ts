@@ -275,7 +275,8 @@ async function listSamples(env: EdgeApiEnv, user: AuthenticatedUser): Promise<An
         return progress;
       }, new Map());
       return { id: item.id, analysisNo: item.analysisNo!, metal: batch.metal,
-        ...(isCenterManager(user.role) ? { batchId: batch.id, assignedChemistId: item.assignedChemistId ?? null, assignedChemistName: item.assignedChemistName ?? null,
+        ...(isCenterManager(user.role) ? { bullionNo: String(item.sequenceNo).padStart(4, "0"), batchId: batch.id, customerName: batch.customerName, registrationNo: batch.publicId,
+          assignedChemistId: item.assignedChemistId ?? null, assignedChemistName: item.assignedChemistName ?? null,
           assignedAt: item.assignedAt ?? null, completedAt: revision?.submittedAt ?? null,
           batchProgress: [...batchProgress.values()], batchReadyForFinalization: false, certificateNo: null } : {}),
         ...(substitution?.recipientId === user.id ? { substitutedByName: substitution.byName, substitutedAt: substitution.transferredAt } : {}),
@@ -284,10 +285,12 @@ async function listSamples(env: EdgeApiEnv, user: AuthenticatedUser): Promise<An
         status: revision?.input.status ?? "pending", examination: revision?.input ?? null };
     }));
   const result = await createDatabase(env.DATABASE_URL).execute<AnonymousSample>(sql`
-    SELECT i.id, b.id AS "batchId", i.assigned_chemist_id AS "assignedChemistId", i.assigned_at AS "assignedAt", e.submitted_at AS "completedAt",
+    SELECT i.id, b.id AS "batchId", customer.display_name AS "customerName", b.public_id AS "registrationNo",
+      i.assigned_chemist_id AS "assignedChemistId", i.assigned_at AS "assignedAt", e.submitted_at AS "completedAt", e.approved_at AS "approvedAt",
       (SELECT full_name FROM users WHERE id = i.assigned_chemist_id) AS "assignedChemistName",
+      approver.full_name AS "approvedByName",
       transfer."substitutedByName", transfer."substitutedAt",
-      i.examination_number::text AS "analysisNo", b.metal,
+      lpad(i.sequence_no::text, 4, '0') AS "bullionNo", i.examination_number::text AS "analysisNo", b.metal,
       b.received_at AS "receivedAt", i.sample_weight_milligrams::float AS "sampleWeightMilligrams",
       b.delta::float AS delta, COALESCE(e.revision_no, 0) AS "revisionNo", COALESCE(e.status::text, 'pending') AS status,
       COALESCE((SELECT json_agg(json_build_object(
@@ -316,7 +319,9 @@ async function listSamples(env: EdgeApiEnv, user: AuthenticatedUser): Promise<An
         'measurementEntries', e.measurement_entries, 'goldResult', e.gold_result::float, 'silverResult', e.silver_result::float,
         'reexaminationRequested', e.reexamination_requested, 'notes', e.notes) END AS examination
     FROM bullion_intake_items i JOIN bullion_intake_batches b ON b.id = i.batch_id
+    JOIN customers customer ON customer.id = b.customer_id
     LEFT JOIN LATERAL (SELECT * FROM bullion_examination_revisions WHERE bullion_item_id = i.id ORDER BY revision_no DESC LIMIT 1) e ON true
+    LEFT JOIN users approver ON approver.id = e.approved_by_user_id
     LEFT JOIN LATERAL (
       SELECT sender.full_name AS "substitutedByName", audit.created_at AS "substitutedAt"
       FROM audit_logs audit JOIN users sender ON sender.id = audit.actor_user_id
@@ -335,8 +340,11 @@ async function listSamples(env: EdgeApiEnv, user: AuthenticatedUser): Promise<An
     }
     if (isCenterManager(user.role)) return sample;
     const anonymous = { ...sample };
-    delete anonymous.batchId; delete anonymous.assignedChemistId; delete anonymous.assignedChemistName;
+    delete anonymous.batchId; delete anonymous.customerName; delete anonymous.registrationNo;
+    delete anonymous.bullionNo;
+    delete anonymous.assignedChemistId; delete anonymous.assignedChemistName;
     delete anonymous.assignedAt; delete anonymous.completedAt;
+    delete anonymous.approvedByName; delete anonymous.approvedAt;
     delete anonymous.batchProgress; delete anonymous.batchReadyForFinalization; delete anonymous.certificateNo;
     return anonymous;
   });

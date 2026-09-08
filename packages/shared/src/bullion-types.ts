@@ -18,7 +18,7 @@ export type BullionMeasurementEntry = {
 
 export type BullionIntakeItemInput = {
   analysisNo?: string;
-  bullionNo: string;
+  bullionNo?: string;
   grossWeightBeforeGrams: number;
   grossWeightAfterGrams?: number;
   slagWeightGrams?: number;
@@ -75,10 +75,14 @@ export type SubmitBullionExaminationInput = {
 
 export type AnonymousSample = {
   batchId?: string;
+  customerName?: string;
+  registrationNo?: string;
   assignedChemistId?: string | null;
   assignedChemistName?: string | null;
   assignedAt?: string | null;
   completedAt?: string | null;
+  approvedByName?: string | null;
+  approvedAt?: string | null;
   substitutedByName?: string | null;
   substitutedAt?: string | null;
   batchProgress?: Array<{
@@ -91,6 +95,7 @@ export type AnonymousSample = {
   batchReadyForFinalization?: boolean;
   certificateNo?: string | null;
   id: string;
+  bullionNo: string;
   analysisNo: string;
   metal: MetalType;
   receivedAt: string;

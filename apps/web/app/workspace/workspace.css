@@ -83,7 +83,7 @@
 .workspace-dialog::backdrop { background: rgb(20 29 43 / 40%); }
 .workspace-dialog-compact { width: min(560px, calc(100vw - 32px)); }
 .workspace-dialog-compact .login-form { width: 100%; max-width: none; }
-.workspace-dialog-examination { --examination-input-width: 148px; width: min(1180px, calc(100vw - 32px)); padding: 20px; }
+.workspace-dialog-examination { --examination-input-width: 132px; width: min(1400px, calc(100vw - 32px)); padding: 20px; }
 .chemist-workstation { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 20px; align-items: start; }
 .chemist-sample-list { border: 1px solid #dbe3ed; background: #ffffff; }
 .chemist-sample-list h2 { margin: 0; padding: 16px; background: #f4f7fa; color: #46556a; font-size: 18px; font-weight: 400; }
@@ -94,7 +94,7 @@
 .new-sample-dot { width: 8px; height: 8px; border-radius: 50%; background: #d97706; flex: 0 0 8px; }
 .chemist-sample-options p { margin: 0; padding: 16px; color: #5d6c7f; }
 .chemist-form-panel { min-width: 0; }
-.chemist-examination { --examination-input-width: 148px; min-width: 0; border: 1px solid #cfd9e6; background: #ffffff; box-shadow: 0 8px 22px rgb(27 47 74 / 12%); padding: 20px; }
+.chemist-examination { --examination-input-width: 132px; min-width: 0; border: 1px solid #cfd9e6; background: #ffffff; box-shadow: 0 8px 22px rgb(27 47 74 / 12%); padding: 20px; }
 .workspace-dialog-examination:focus, .workspace-dialog-examination:focus-visible { outline: none; }
 .chemist-sample-row { position: relative; }
 .manager-sample-row { cursor: pointer; }
@@ -140,6 +140,7 @@
 .status-badge { border-radius: 4px; padding: 5px 8px; font-size: 13px; font-weight: 600; white-space: nowrap; }
 .status-active { color: #17633c; background: #e9f8ef; }
 .status-warning { color: #9b5b08; background: #fff5df; }
+.status-neutral { color: #46556a; background: #eef2f6; }
 .settings-success { margin: 0; color: #17633c; }
 .batch-timeline { display: grid; gap: 5px; min-width: 160px; }
 .batch-timeline > span { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; white-space: nowrap; }
@@ -147,17 +148,29 @@
 .timeline-pending { color: #9b5b08; }
 .timeline-pending i { width: 8px; height: 8px; border-radius: 50%; background: #e88400; }
 .certificate-ready { color: #17633c; font-weight: 600; }
+.approval-notice { display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px; border: 1px solid #abd5bc; border-radius: 4px; background: #e7f6ed; color: #22643e; font-size: 14px; font-weight: 600; }
+.examination-actions > .approval-notice { margin-right: auto; }
+.approval-notice time { font-variant-numeric: tabular-nums; font-weight: 400; }
+.manager-review-workstation { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 22px; align-items: stretch; min-height: 600px; }
+.manager-review-workstation .chemist-sample-list { min-height: 100%; }
+.manager-review-workstation .chemist-form-panel { display: flex; min-height: 100%; }
+.manager-review-workstation .chemist-examination { display: flex; flex: 1; flex-direction: column; min-height: 100%; }
+.manager-review-workstation .examination-form { display: flex; flex: 1; flex-direction: column; }
+.manager-review-workstation .examination-actions { margin-top: auto; }
+.manager-review-workstation .chemist-sample-option { grid-template-columns: 24px minmax(0, 1fr); align-items: center; }
+.manager-review-workstation .chemist-sample-option .status-badge { grid-column: 2; justify-self: start; margin-top: 4px; }
+@media (max-width: 900px) { .manager-review-workstation { grid-template-columns: 1fr; min-height: 0; } .manager-review-workstation .chemist-sample-list { min-height: 0; } }
 @media (max-width: 720px) { .workspace-section-heading { flex-direction: column; } .integration-client-card dl, .integration-form-grid { grid-template-columns: 1fr; } }
 .danger-button { border-color: #c94141; background: #c94141; color: #ffffff; }
 .danger-button:hover:not(:disabled) { border-color: #a52e2e; background: #a52e2e; }
 .chemist-sample-row .workspace-link::after { content: ""; position: absolute; inset: 0; cursor: pointer; }
 .chemist-sample-row:hover, .chemist-sample-row:focus-within { background: #f3f4f6; }
 .workspace-dialog-examination .workspace-dialog-heading { margin-bottom: 16px; }
-.examination-metadata { display: grid; grid-template-columns: 1fr 1fr 2fr 1fr; gap: 12px; margin: 0 0 18px; font-size: 16px; }
+.examination-metadata { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) 180px 150px; gap: 12px; margin: 0 0 18px; font-size: 16px; }
 .examination-metadata dt { color: #46556a; margin-bottom: 6px; }
 .examination-metadata dd { margin: 0; padding: 7px 8px; border: 1px solid #d3dce8; border-radius: 4px; overflow-wrap: anywhere; line-height: 22px; }
-.examination-scroll { overflow-x: auto; }
-.examination-columns { display: grid; grid-template-columns: calc(200px + 2 * var(--examination-input-width)) calc(166px + 2 * var(--examination-input-width)) var(--examination-input-width); gap: 16px; align-items: start; min-width: 1138px; }
+.examination-scroll { min-width: 0; overflow-x: hidden; }
+.examination-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(120px, 0.28fr); gap: 16px; align-items: start; min-width: 0; }
 .examination-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 15px; }
 .examination-table th { font-weight: 400; text-align: center; line-height: 20px; height: 44px; padding: 3px 4px; }
 .examination-table tbody th { text-align: right; overflow-wrap: anywhere; }
@@ -171,7 +184,7 @@
 .workspace-dialog-examination input[type="radio"], .workspace-dialog-examination input[type="checkbox"], .chemist-examination input[type="radio"], .chemist-examination input[type="checkbox"] { min-height: 0; width: 16px; height: 16px; padding: 0; margin: 0; accent-color: #596579; flex-shrink: 0; }
 .examination-results h3 { display: flex; align-items: center; justify-content: center; height: 44px; margin: 0; font-size: 16px; font-weight: 400; }
 .examination-results label { display: grid; gap: 5px; margin: 4px 0 12px; font-size: 15px; }
-.examination-right { grid-column: 2 / 4; display: grid; grid-template-columns: calc(166px + 2 * var(--examination-input-width)) var(--examination-input-width); column-gap: 16px; align-items: start; }
+.examination-right { grid-column: 2 / 4; display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, 0.28fr); column-gap: 16px; align-items: start; }
 .examination-columns { row-gap: 0; }
 .examination-totals { grid-column: 1; grid-row: 2; }
 .examination-footer-fields { grid-column: 2 / 4; grid-row: 2; display: grid; grid-template-columns: 154px minmax(0, 1fr); gap: 5px 3px; padding: 4px 0; font-size: 15px; }
@@ -191,6 +204,7 @@
 .examination-recheck span { text-align: right; }
 .examination-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 16px; }
 .examination-actions > span { margin-right: auto; font-size: 15px; color: #46556a; }
+.workspace-dialog-actions .approval-notice { margin-right: 0; white-space: nowrap; }
 @media (max-width: 700px) {
   .examination-metadata { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
