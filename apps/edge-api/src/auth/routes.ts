@@ -6,6 +6,7 @@ import type { EdgeApiEnv } from "../app";
 import { getAuthStore } from "./auth-store";
 import { canCreateInvitations, setAuthCookie } from "./cookies";
 import { getAuthenticatedUserFromRequest } from "./http";
+import { isFailedLoginRateLimited } from "../security/middleware";
 
 export const authRoutes = new Hono<{ Bindings: EdgeApiEnv }>();
 
@@ -32,6 +33,10 @@ authRoutes.post("/login", async (c) => {
   const result = await store.login(email, password);
 
   if (!result.ok) {
+    if (isFailedLoginRateLimited(c.req.raw, c.env)) {
+      c.header("Retry-After", "900");
+      return c.json({ ok: false, message: "Хэт олон амжилтгүй оролдлого хийсэн байна. 15 минутын дараа дахин оролдоно уу." }, 429);
+    }
     const message =
       result.reason === "locked"
         ? "Хэт олон амжилтгүй оролдлого хийсэн тул түр түгжигдсэн байна."

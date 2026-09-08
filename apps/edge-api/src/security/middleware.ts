@@ -112,8 +112,19 @@ function isRateLimited(request: Request, env: EdgeApiEnv, pathname: string): boo
     return false;
   }
 
-  const ip = getTrustedClientIp(request) ?? "unknown";
   const policy = ratePolicy(pathname);
+  return consumeRateLimit(request, policy);
+}
+
+export function isFailedLoginRateLimited(request: Request, env: EdgeApiEnv): boolean {
+  if (env.AUTH_DEV_LOGIN_ENABLED === "true" || env.RATE_LIMITING_ENABLED === "false") {
+    return false;
+  }
+  return consumeRateLimit(request, { name: "login_failed", maxRequests: 15, windowMs: 15 * 60 * 1000 });
+}
+
+function consumeRateLimit(request: Request, policy: { name: string; maxRequests: number; windowMs: number }): boolean {
+  const ip = getTrustedClientIp(request) ?? "unknown";
   const key = `${policy.name}:${ip}`;
   const now = Date.now();
   const bucket = MEMORY_BUCKETS.get(key);
@@ -128,9 +139,6 @@ function isRateLimited(request: Request, env: EdgeApiEnv, pathname: string): boo
 }
 
 function ratePolicy(pathname: string): { name: string; maxRequests: number; windowMs: number } {
-  if (pathname === "/api/auth/login") {
-    return { name: "login", maxRequests: 10, windowMs: 15 * 60 * 1000 };
-  }
   if (pathname.startsWith("/api/setup/")) {
     return { name: "setup", maxRequests: 5, windowMs: 15 * 60 * 1000 };
   }
