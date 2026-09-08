@@ -56,7 +56,7 @@ export function OperationalWorkspace() {
         {manager && view === "dashboard" && <DashboardWorkspace />}
         {view === "intake" && <IntakeWorkspace manager={!!manager} />}
         {view === "samples" && <SampleWorkspace manager={!!manager} centerType={user.organizationType} />}
-        {manager && view === "customers" && <CustomerWorkspace />}
+        {manager && view === "customers" && <CustomerWorkspace showAssayCenter={user.role === "system_admin"} />}
         {manager && view === "staff" && <StaffWorkspace user={user} />}
         {user.role === "system_admin" && view === "organizations" && <OrganizationsWorkspace />}
         {user.role === "system_admin" && view === "settings" && <IntegrationSettingsWorkspace />}
@@ -121,7 +121,7 @@ function DashboardWorkspace() {
   </section>;
 }
 
-function CustomerWorkspace() {
+function CustomerWorkspace({ showAssayCenter }: { showAssayCenter: boolean }) {
   const [customers, setCustomers] = useState<CustomerRecord[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -130,7 +130,7 @@ function CustomerWorkspace() {
     .then(({ data }) => { setCustomers(data); setError(""); })
     .catch((error) => setError(error.message)).finally(() => setLoading(false)), []);
   useEffect(() => { void refresh(); }, [refresh]);
-  return <><CustomersView customers={customers} error={error} isLoading={loading} onRefresh={refresh} onOpenCreate={() => setCreating(true)} />
+  return <><CustomersView customers={customers} error={error} isLoading={loading} showAssayCenter={showAssayCenter} onRefresh={refresh} onOpenCreate={() => setCreating(true)} />
     {creating && <CreateCustomerDialog onClose={() => setCreating(false)} onCreated={() => { setCreating(false); void refresh(); }} />}</>;
 }
 

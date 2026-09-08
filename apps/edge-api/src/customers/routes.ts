@@ -193,11 +193,14 @@ async function listCustomersFromDatabase(
       c.registration_number_encrypted AS "registrationNumberMasked",
       c.email_encrypted AS "emailMasked",
       c.phone_encrypted AS "phoneMasked",
+      c.assay_center_id AS "assayCenterId",
+      organization.name AS "assayCenterName",
       count(ar.id)::int AS "totalAssays",
       COALESCE(sum(ar.received_gross_weight_grams), 0)::float AS "totalGrossWeightGrams",
       max(ar.received_at) AS "lastAssayAt",
       c.created_at AS "createdAt"
     FROM customers c
+    INNER JOIN organizations organization ON organization.id = c.assay_center_id
     LEFT JOIN customer_organization_profiles p ON p.customer_id = c.id
     LEFT JOIN assay_records ar ON ar.customer_id = c.id
     ${organizationFilter}
@@ -210,6 +213,8 @@ async function listCustomersFromDatabase(
       c.registration_number_encrypted,
       c.email_encrypted,
       c.phone_encrypted,
+      c.assay_center_id,
+      organization.name,
       c.created_at
     ORDER BY c.created_at DESC
     LIMIT 200
@@ -441,6 +446,8 @@ async function mapCustomerRow(row: CustomerRow, encryptionKey?: string): Promise
     registrationNumberMasked: await maskStoredValue(row.registrationNumberMasked, encryptionKey, maskSensitiveValue),
     emailMasked: await maskStoredValue(row.emailMasked, encryptionKey, maskEmail),
     phoneMasked: await maskStoredValue(row.phoneMasked, encryptionKey, maskPhone),
+    assayCenterId: row.assayCenterId || undefined,
+    assayCenterName: row.assayCenterName || undefined,
     totalAssays: Number(row.totalAssays),
     totalGrossWeightGrams: Number(row.totalGrossWeightGrams),
     lastAssayAt: row.lastAssayAt instanceof Date
@@ -521,6 +528,8 @@ type CustomerRow = {
   registrationNumberMasked: string | null;
   emailMasked: string | null;
   phoneMasked: string | null;
+  assayCenterId?: string | null;
+  assayCenterName?: string | null;
   totalAssays: number | string;
   totalGrossWeightGrams: number | string;
   lastAssayAt: string | Date | null;

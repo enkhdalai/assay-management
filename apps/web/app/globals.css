@@ -622,6 +622,10 @@ h2 {
   grid-template-columns: minmax(180px, 1fr) 120px 130px minmax(170px, 0.8fr) 80px 110px 150px;
 }
 
+.customer-table-with-center .table-row {
+  grid-template-columns: minmax(180px, 1fr) 120px 130px minmax(150px, 0.8fr) minmax(150px, 0.8fr) 80px 110px 150px;
+}
+
 .customer-record-row { cursor: pointer; }
 
 .customer-record-row .customer-name { font-weight: 400; }
@@ -1508,6 +1512,11 @@ h2 {
   .customer-table .table-row {
     grid-template-columns: 180px 110px 120px 170px 70px 100px 145px;
     min-width: 980px;
+  }
+
+  .customer-table-with-center .table-row {
+    grid-template-columns: 180px 110px 120px 170px 170px 70px 100px 145px;
+    min-width: 1145px;
   }
 
   .audit-table .table-row {

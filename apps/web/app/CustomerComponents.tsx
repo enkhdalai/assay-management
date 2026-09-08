@@ -9,12 +9,14 @@ export function CustomersView({
   customers,
   error,
   isLoading,
+  showAssayCenter,
   onOpenCreate,
   onRefresh,
 }: {
   customers: CustomerRecord[];
   error: string;
   isLoading: boolean;
+  showAssayCenter: boolean;
   onOpenCreate(): void;
   onRefresh(): void;
 }) {
@@ -22,13 +24,21 @@ export function CustomersView({
   const legalEntities = customers.filter((customer) => customer.type === "legal_entity").length;
   const totalWeight = customers.reduce((sum, customer) => sum + customer.totalGrossWeightGrams, 0);
   const [typeFilter, setTypeFilter] = useState<CustomerRecord["type"] | "all">("all");
+  const [assayCenterFilter, setAssayCenterFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
+  const assayCenters = useMemo(() => Array.from(new Map(
+    customers
+      .filter((customer) => customer.assayCenterId && customer.assayCenterName)
+      .map((customer) => [customer.assayCenterId!, customer.assayCenterName!]),
+  ).entries()).map(([id, name]) => ({ id, name })).sort((left, right) => left.name.localeCompare(right.name)), [customers]);
+  const canFilterByAssayCenter = showAssayCenter && assayCenters.length > 0;
   const filteredCustomers = useMemo(
     () =>
       customers.filter((customer) => {
         const normalizedQuery = searchQuery.trim().toLowerCase();
         const matchesType = typeFilter === "all" || customer.type === typeFilter;
+        const matchesAssayCenter = assayCenterFilter === "all" || customer.assayCenterId === assayCenterFilter;
         const matchesSearch = normalizedQuery.length === 0 || [
           customer.displayName,
           customer.type === "individual" ? "иргэн" : "байгууллага",
@@ -37,9 +47,9 @@ export function CustomersView({
           customer.emailMasked ?? "",
         ].some((value) => value.toLowerCase().includes(normalizedQuery));
 
-        return matchesType && matchesSearch;
+        return matchesType && matchesAssayCenter && matchesSearch;
       }),
-    [customers, searchQuery, typeFilter],
+    [assayCenterFilter, customers, searchQuery, typeFilter],
   );
 
   return (
@@ -89,6 +99,14 @@ export function CustomersView({
             <option value="individual">Иргэн</option>
             <option value="legal_entity">Байгууллага</option>
           </select>
+          {canFilterByAssayCenter ? <select
+            aria-label="Сорьцын төв"
+            value={assayCenterFilter}
+            onChange={(event) => setAssayCenterFilter(event.currentTarget.value)}
+          >
+            <option value="all">Бүх сорьцын төв</option>
+            {assayCenters.map((center) => <option key={center.id} value={center.id}>{center.name}</option>)}
+          </select> : null}
           <input
             aria-label="Хайлт"
             placeholder="Нэр, регистрийн masked утгаар хайх"
@@ -100,12 +118,13 @@ export function CustomersView({
 
         {error ? <p className="login-error">{error}</p> : null}
 
-        <div className="record-table customer-table" role="table" aria-label="Харилцагчид">
+        <div className={`record-table customer-table${canFilterByAssayCenter ? " customer-table-with-center" : ""}`} role="table" aria-label="Харилцагчид">
           <div className="table-row table-head" role="row">
             <span>Нэр</span>
             <span>Төрөл</span>
             <span>Регистр</span>
             <span>Холбоо барих</span>
+            {canFilterByAssayCenter ? <span>Сорьцын төв</span> : null}
             <span>Сорьц</span>
             <span>Нийт жин</span>
             <span>Сүүлд ирсэн</span>
@@ -131,6 +150,7 @@ export function CustomersView({
                 <span>{customer.type === "individual" ? "Иргэн" : "Байгууллага"}</span>
                 <span>{customer.registrationNumberMasked ?? "-"}</span>
                 <span>{formatMaskedContact(customer)}</span>
+                {canFilterByAssayCenter ? <span>{customer.assayCenterName ?? "-"}</span> : null}
                 <span>{customer.totalAssays}</span>
                 <span>{formatWeight(customer.totalGrossWeightGrams)}</span>
                 <span>{formatDateTime(customer.lastAssayAt)}</span>

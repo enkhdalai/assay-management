@@ -13,6 +13,8 @@ export type CustomerRecord = {
   createdAt: string;
   province?: string;
   district?: string;
+  assayCenterId?: string;
+  assayCenterName?: string;
 };
 
 export type CustomerDetail = CustomerRecord & {
