@@ -19,7 +19,10 @@ const slagValue = (row: WeightRow) => row.before.trim() && row.after.trim()
   ? String(Number((Number(row.before) - Number(row.after)).toFixed(4))) : "";
 const intakeStatus = (status: BullionIntakeBatchRecord["status"]) => status === "sample_taken" ? "Дээж илгээсэн" : status === "ready_for_sampling" ? "Эрхлэгчид илгээсэн" : "Хүлээн авалт / хайлалт";
 const examinationNumber = (value?: string) => value ? value.padStart(4, "0") : "-";
-const bullionNumber = (sequenceNo: number) => String(sequenceNo).padStart(4, "0");
+const bullionNumber = (firstNumber: string, offset = 0) => {
+  if (!/^\d+$/.test(firstNumber)) return "";
+  return String(Number(firstNumber) + offset).padStart(Math.max(4, firstNumber.length), "0");
+};
 const intakeDateFormatter = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Ulaanbaatar", year: "numeric", month: "2-digit", day: "2-digit" });
 function intakeDate(value?: string) {
   if (!value || !Number.isFinite(Date.parse(value))) return "-";
@@ -126,14 +129,14 @@ export function IntakeDialog({ batch, initialMetal = "gold", customers, manager,
       {!batch && <div className="workspace-form-grid">
         <label htmlFor="intake-date">Огноо<CalendarDateInput id="intake-date" name="receivedAt" defaultValue={new Date().toISOString().slice(0, 10)} /></label>
         <label>Харилцагч байгууллага<CustomerCombobox customers={customers} value={customerId} onChange={(customer) => { setSequence(null); setCustomerId(customer?.id ?? ""); setLocation({ province: customer?.province ?? "", district: customer?.district ?? "", origin: customer?.origin ?? "" }); }} /></label>
-        <label>Гулдмайн эхлэх дугаар<input readOnly value={bullionNumber(1)} placeholder={customerId && !startNumber ? "Ачаалж байна..." : ""} /></label>
+        <label>Гулдмайн эхлэх дугаар<input readOnly value={startNumber} placeholder={customerId && !startNumber ? "Ачаалж байна..." : ""} /></label>
         <div className="intake-secondary-fields"><label>Салбар байгууллага<input name="branchName" maxLength={255} /></label><label>Тоо ширхэг<input type="number" min="1" max="100" step="1" value={rows.length} onChange={(event) => changeQuantity(event.target.value)} /></label><label>Делта<input name="delta" type="number" step="0.000001" defaultValue="-0.03125" required /></label></div>
         <div className="intake-location-fields"><label>Аймаг, хот<input name="province" maxLength={120} value={location.province} onChange={(event) => setLocation((current) => ({ ...current, province: event.target.value }))} /></label><label>Сум, дүүрэг<input name="district" maxLength={120} value={location.district} onChange={(event) => setLocation((current) => ({ ...current, district: event.target.value }))} /></label><label>Гарал, үүсэл<input name="origin" maxLength={120} value={location.origin} onChange={(event) => setLocation((current) => ({ ...current, origin: event.target.value }))} /></label></div>
       </div>}
-      {batch && <div className="workspace-form-grid"><label>Харилцагч байгууллага<input readOnly value={batch.customerName} /></label><label>Гулдмайн эхлэх дугаар<input readOnly value={bullionNumber(1)} /></label><label>Тоо ширхэг<input readOnly value={rows.length} /></label></div>}
+      {batch && <div className="workspace-form-grid"><label>Харилцагч байгууллага<input readOnly value={batch.customerName} /></label><label>Гулдмайн эхлэх дугаар<input readOnly value={batch.initialBullionNumber || "-"} /></label><label>Тоо ширхэг<input readOnly value={rows.length} /></label></div>}
       <div className="workspace-table-scroll"><table className="workspace-table weight-table"><thead><tr><th rowSpan={2}>Шинжилгээний №</th><th rowSpan={2}>Гулдмайн №</th><th colSpan={2}>Хайлалтын жин /гр/</th><th rowSpan={2}>Шлак /гр/</th>{manager && <th rowSpan={2}>Дээжийн жин /мг/</th>}{!batch && <th rowSpan={2}>Үйлдэл</th>}</tr><tr><th>Өмнөх</th><th>Дараах</th></tr></thead><tbody>{rows.map((row, index) => <tr key={row.id || index}>
         <td><input aria-label={`Шинжилгээ ${index + 1} дугаар`} readOnly value={batch?.items[index]?.analysisNo || ""} placeholder="Автомат" /></td>
-        <td><input aria-label={`Гулдмай ${index + 1} дугаар`} readOnly value={bullionNumber(index + 1)} /></td>
+        <td><input aria-label={`Гулдмай ${index + 1} дугаар`} readOnly value={batch ? row.bullionNo : bullionNumber(startNumber, index)} /></td>
         {(["before", "after", "slag", ...(manager ? ["sample"] : [])] as const).map((field) => <td key={field}><input aria-label={`${index + 1} ${field}`} type="number" min={field === "before" || field === "sample" || field === "after" ? "0.0001" : "0"} max={field === "after" && row.before ? Number(row.before) : undefined} step="0.0001" required={field === "before"} readOnly={field === "slag" || (field === "before" && !!batch)} value={field === "slag" ? slagValue(row) : row[field as keyof WeightRow] || ""} onChange={(event) => update(index, field as keyof WeightRow, event.target.value)} /></td>)}
         {!batch && <td className="weight-row-action"><button type="button" className="workspace-link" disabled={rows.length === 1} onClick={() => setRows((current) => current.filter((_, rowIndex) => rowIndex !== index))}>Хасах</button></td>}
       </tr>)}</tbody></table></div>

@@ -402,27 +402,26 @@ async function assignInMemory(batch: BullionIntakeBatchRecord, user: Authenticat
 }
 
 function customerSequenceQuery(customerId: string, user: AuthenticatedUser) {
-  return sql`SELECT c.id, c.display_name AS "displayName", c.assay_center_id AS "organizationId", numbering.prefix,
-      bullion.value AS "nextSequence", numbering.prefix || lpad(bullion.value::text, GREATEST(4, length(bullion.value::text)), '0') AS "nextNumber",
-      numbering.prefix || lpad(registration.value::text, GREATEST(4, length(registration.value::text)), '0') AS "nextRegistrationNumber"
+  return sql`SELECT c.id, c.display_name AS "displayName", c.assay_center_id AS "organizationId", ''::text AS prefix,
+      bullion.value AS "nextSequence", lpad(bullion.value::text, GREATEST(4, length(bullion.value::text)), '0') AS "nextNumber",
+      numbering.registration_prefix || lpad(registration.value::text, GREATEST(4, length(registration.value::text)), '0') AS "nextRegistrationNumber"
     FROM customers c
     JOIN organizations o ON o.id = c.assay_center_id
-    CROSS JOIN LATERAL (SELECT COALESCE(o.metadata->>'bullionPrefix', CASE WHEN o.type = 'private_assay_center' THEN '55' ELSE '' END) AS prefix) numbering
-    CROSS JOIN LATERAL (SELECT COALESCE(max(CASE WHEN i.bullion_no ~ ('^' || numbering.prefix || '[0-9]{4,12}$')
-      THEN substring(i.bullion_no FROM length(numbering.prefix) + 1)::bigint END), 0) + 1 AS value
+    CROSS JOIN LATERAL (SELECT COALESCE(o.metadata->>'bullionPrefix', CASE WHEN o.type = 'private_assay_center' THEN '55' ELSE '' END) AS registration_prefix) numbering
+    CROSS JOIN LATERAL (SELECT COALESCE(max(CASE WHEN i.bullion_no ~ '^[0-9]{1,12}$'
+      THEN i.bullion_no::bigint END), 0) + 1 AS value
       FROM bullion_intake_items i JOIN bullion_intake_batches b ON b.id = i.batch_id
       WHERE b.assay_center_id = o.id) bullion
-    CROSS JOIN LATERAL (SELECT COALESCE(max(CASE WHEN b.public_id ~ ('^' || numbering.prefix || '[0-9]{4,12}$')
-      THEN substring(b.public_id FROM length(numbering.prefix) + 1)::bigint END), 0) + 1 AS value
+    CROSS JOIN LATERAL (SELECT COALESCE(max(CASE WHEN b.public_id ~ ('^' || numbering.registration_prefix || '[0-9]{4,12}$')
+      THEN substring(b.public_id FROM length(numbering.registration_prefix) + 1)::bigint END), 0) + 1 AS value
       FROM bullion_intake_batches b WHERE b.assay_center_id = o.id) registration
     WHERE c.id = ${customerId} AND (${user.role} = 'system_admin' OR c.assay_center_id = ${user.organizationId})`;
 }
 
 function memoryNextNumber(user: AuthenticatedUser): { prefix: string; value: number } {
-  const prefix = user.organizationType === "private_assay_center" ? "55" : "";
   const issued = inMemoryBatches.filter((batch) => batchOwners.get(batch.id) === user.organizationId)
-    .flatMap((batch) => batch.items).map((item) => new RegExp(`^${prefix}[0-9]{4,12}$`).test(item.bullionNo) ? Number(item.bullionNo.slice(prefix.length)) : 0);
-  return { prefix, value: issued.reduce((max, value) => Math.max(max, value), 0) + 1 };
+    .flatMap((batch) => batch.items).map((item) => /^[0-9]{1,12}$/.test(item.bullionNo) ? Number(item.bullionNo) : 0);
+  return { prefix: "", value: issued.reduce((max, value) => Math.max(max, value), 0) + 1 };
 }
 
 function memoryNextRegistrationNumber(user: AuthenticatedUser): { prefix: string; value: number } {
@@ -757,7 +756,7 @@ async function createIntakeInDatabase(
           id, batch_id, sequence_no, bullion_no, gross_weight_before_grams,
           gross_weight_after_grams, slag_weight_grams, sample_weight_milligrams
         ) SELECT r.id, b.id, r."sequenceNo",
-          c.prefix || lpad((c."nextSequence" + r."sequenceNo" - 1)::text, GREATEST(4, length((c."nextSequence" + r."sequenceNo" - 1)::text)), '0'),
+          lpad((c."nextSequence" + r."sequenceNo" - 1)::text, GREATEST(4, length((c."nextSequence" + r."sequenceNo" - 1)::text)), '0'),
           r."grossWeightBeforeGrams", r."grossWeightAfterGrams", r."slagWeightGrams", r."sampleWeightMilligrams"
         FROM created b JOIN customer c ON c.id = b.customer_id CROSS JOIN jsonb_to_recordset(${JSON.stringify(items)}::jsonb)
           AS r(id uuid, "sequenceNo" int, "grossWeightBeforeGrams" numeric,

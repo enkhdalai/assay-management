@@ -113,16 +113,16 @@ test("PostgreSQL routes enforce tenant scope and persist staff and intake audits
     assert.equal(updatedCustomer.phone, "99112233");
     assert.equal(updatedCustomer.organizationProfile.depositName, "Test deposit");
     const nextPath = `/api/v1/bullion/intakes/next-number?customerId=${customer.id}`;
-    assert.equal((await (await request(nextPath, melter)).json()).nextNumber, "550001");
+    assert.equal((await (await request(nextPath, melter)).json()).nextNumber, "0001");
     assert.equal((await request(nextPath, foreign)).status, 404);
     assert.equal((await request(nextPath, chemist)).status, 403);
     const intake = await request("/api/v1/bullion/intakes", melter, "POST", { customerId: customer.id, metal: "gold", status: "draft", delta: -0.03125, items: [{ bullionNo: "1", grossWeightBeforeGrams: 100 }] });
     assert.equal(intake.status, 201);
     const batch = (await intake.json()).record;
     assert.equal(batch.publicId, "550001");
-    assert.equal(batch.initialBullionNumber, "550001");
-    assert.equal(batch.items[0].bullionNo, "550001");
-    assert.equal((await (await request(nextPath, le)).json()).nextNumber, "550002");
+    assert.equal(batch.initialBullionNumber, "0001");
+    assert.equal(batch.items[0].bullionNo, "0001");
+    assert.equal((await (await request(nextPath, le)).json()).nextNumber, "0002");
     const item = batch.items[0];
     const weights = { status: "draft", items: [{ id: item.id, grossWeightAfterGrams: 99.5, slagWeightGrams: 999 }] };
     assert.equal((await request(`/api/v1/bullion/intakes/${batch.id}`, melter, "PATCH", { status: "ready_for_sampling", items: [{ id: item.id }] })).status, 400);
@@ -191,7 +191,7 @@ test("PostgreSQL routes enforce tenant scope and persist staff and intake audits
     const history = await database.query("SELECT count(*)::int AS count FROM audit_logs WHERE action = 'bullion_intake.updated' AND entity_id = $1", [batch.id]);
     assert.equal(history.rows[0].count, 3);
     await database.query("INSERT INTO customer_organization_profiles (customer_id, mine_initial_number) VALUES ($1, '4829') ON CONFLICT (customer_id) DO UPDATE SET mine_initial_number = EXCLUDED.mine_initial_number", [customer.id]);
-    assert.equal((await (await request(nextPath, melter)).json()).nextNumber, "550002");
+    assert.equal((await (await request(nextPath, melter)).json()).nextNumber, "0002");
     const concurrent = await Promise.all([1, 2].map(() => request("/api/v1/bullion/intakes", melter, "POST", {
       customerId: customer.id, metal: "silver", initialBullionNumber: "1",
       items: [{ bullionNo: "999", grossWeightBeforeGrams: 50 }, { bullionNo: "999", grossWeightBeforeGrams: 60 }],
@@ -199,10 +199,10 @@ test("PostgreSQL routes enforce tenant scope and persist staff and intake audits
     const allocated = await Promise.all(concurrent.map(async (response) => {
       assert.equal(response.status, 201); return (await response.json()).record;
     }));
-    assert.deepEqual(allocated.flatMap((record) => record.items.map((item) => Number(item.bullionNo))).sort((a, b) => a - b), [550002, 550003, 550004, 550005]);
+    assert.deepEqual(allocated.flatMap((record) => record.items.map((item) => Number(item.bullionNo))).sort((a, b) => a - b), [2, 3, 4, 5]);
     assert.equal(new Set(allocated.map((record) => record.publicId)).size, 2);
     assert.deepEqual(allocated.map((record) => record.publicId).sort(), ["550002", "550003"]);
-    assert.equal((await (await request(nextPath, melter)).json()).nextNumber, "550006");
+    assert.equal((await (await request(nextPath, melter)).json()).nextNumber, "0006");
     const listed = (await (await request("/api/v1/bullion/intakes", le)).json()).data;
     assert(listed.every((record) => record.customerId === customer.id));
     const personResponse = await request("/api/v1/customers", le, "POST", {
@@ -367,8 +367,9 @@ test("PostgreSQL routes enforce tenant scope and persist staff and intake audits
     assert.equal(organizationAudit[0].old_values.type, "private_assay_center");
     assert.equal(organizationAudit[0].new_values.type, "government_assay_center");
     assert.equal((await request(organizationPath, admin, "POST", { ...organizationInput, code: "BAD-PREFIX", bullionPrefix: "99" })).status, 400);
-    for (const [prefix, type, expected] of [[null, "government_assay_center", "0001"], ["22", "government_assay_center", "220001"], ["27", "government_assay_center", "270001"], [null, "private_assay_center", "550001"]]) {
-      const created = await request(organizationPath, admin, "POST", { name: `Certificate center ${expected}`, code: `CERT-${expected}`, type, bullionPrefix: prefix });
+    for (const [prefix, type, suffix, firstRegistrationNo] of [[null, "government_assay_center", "default", "0001"], ["22", "government_assay_center", "22", "220001"], ["27", "government_assay_center", "27", "270001"], [null, "private_assay_center", "private", "550001"]]) {
+      const expected = "0001";
+      const created = await request(organizationPath, admin, "POST", { name: `Certificate center ${suffix}`, code: `CERT-${suffix}`, type, bullionPrefix: prefix });
       assert.equal(created.status, 201);
       const organization = (await created.json()).record;
       assert.equal(organization.bullionPrefix, prefix);
@@ -378,6 +379,7 @@ test("PostgreSQL routes enforce tenant scope and persist staff and intake audits
       async function completeRequest() {
         const intake = (await (await request("/api/v1/bullion/intakes", manager, "POST", { customerId: owner.id, metal: "gold", status: "sample_taken",
           items: [{ bullionNo: "", grossWeightBeforeGrams: 100, grossWeightAfterGrams: 99, sampleWeightMilligrams: 2000 }] })).json()).record;
+        if (intake.items[0].bullionNo === "0001") assert.equal(intake.publicId, firstRegistrationNo);
         const id = intake.items[0].id;
         assert.equal((await request("/api/v1/bullion/examinations", analyst, "POST", { ...exam, bullionItemId: id, status: "submitted" })).status, 201);
         assert.equal((await request(`/api/v1/bullion/samples/${id}/approve`, manager, "POST", {})).status, 200);
