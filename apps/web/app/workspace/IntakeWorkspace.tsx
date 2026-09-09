@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { RefreshCw } from "lucide-react";
-import type { BullionIntakeBatchRecord, CreateBullionIntakeInput, CustomerRecord } from "../../../../packages/shared/src";
+import type { BullionIntakeBatchRecord, CreateBullionIntakeInput } from "../../../../packages/shared/src";
 import { CreateCustomerDialog } from "../CustomerComponents";
 import { WorkspaceDialog } from "../OperationalWorkspace";
 import { api } from "./api";
@@ -73,7 +73,7 @@ export function IntakeDialog({ batch, initialMetal = "gold", customers, manager,
   batch: BullionIntakeBatchRecord | null; initialMetal?: "gold" | "silver"; customers: CustomerOption[]; manager: boolean;
   onClose(): void; onSaved(): void; onCustomer(customer: CustomerOption): void;
 }) {
-  const [rows, setRows] = useState<WeightRow[]>(batch ? batch.items.map((item) => ({ id: item.id, bullionNo: item.bullionNo, before: String(item.grossWeightBeforeGrams), after: item.grossWeightAfterGrams == null ? "" : String(item.grossWeightAfterGrams), slag: item.slagWeightGrams == null ? "" : String(item.slagWeightGrams), sample: item.sampleWeightMilligrams == null ? "" : String(item.sampleWeightMilligrams) })) : [newRow()]);
+  const [rows, setRows] = useState<WeightRow[]>(batch ? batch.items.map((item) => ({ id: item.id, bullionNo: item.bullionNo ?? "", before: String(item.grossWeightBeforeGrams), after: item.grossWeightAfterGrams == null ? "" : String(item.grossWeightAfterGrams), slag: item.slagWeightGrams == null ? "" : String(item.slagWeightGrams), sample: item.sampleWeightMilligrams == null ? "" : String(item.sampleWeightMilligrams) })) : [newRow()]);
   const [customerId, setCustomerId] = useState(batch?.customerId || "");
   const [location, setLocation] = useState({ province: batch?.province ?? "", district: batch?.district ?? "", origin: batch?.dispatchReference ?? "" });
   const metal = batch?.metal ?? initialMetal;
@@ -128,7 +128,7 @@ export function IntakeDialog({ batch, initialMetal = "gold", customers, manager,
     <form onSubmit={submit} className="workspace-form"><fieldset disabled={saving || locked}>
       {!batch && <div className="workspace-form-grid">
         <label htmlFor="intake-date">Огноо<CalendarDateInput id="intake-date" name="receivedAt" defaultValue={new Date().toISOString().slice(0, 10)} /></label>
-        <label>Харилцагч байгууллага<CustomerCombobox customers={customers} value={customerId} onChange={(customer) => { setSequence(null); setCustomerId(customer?.id ?? ""); setLocation({ province: customer?.province ?? "", district: customer?.district ?? "", origin: customer?.origin ?? "" }); }} /></label>
+        <label htmlFor="intake-customer">Харилцагч байгууллага<CustomerCombobox inputId="intake-customer" customers={customers} value={customerId} onChange={(customer) => { setSequence(null); setCustomerId(customer?.id ?? ""); setLocation({ province: customer?.province ?? "", district: customer?.district ?? "", origin: customer?.origin ?? "" }); }} /></label>
         <label>Гулдмайн эхлэх дугаар<input readOnly value={startNumber} placeholder={customerId && !startNumber ? "Ачаалж байна..." : ""} /></label>
         <div className="intake-secondary-fields"><label>Салбар байгууллага<input name="branchName" maxLength={255} /></label><label>Тоо ширхэг<input type="number" min="1" max="100" step="1" value={rows.length} onChange={(event) => changeQuantity(event.target.value)} /></label><label>Делта<input name="delta" type="number" step="0.000001" defaultValue="-0.03125" required /></label></div>
         <div className="intake-location-fields"><label>Аймаг, хот<input name="province" maxLength={120} value={location.province} onChange={(event) => setLocation((current) => ({ ...current, province: event.target.value }))} /></label><label>Сум, дүүрэг<input name="district" maxLength={120} value={location.district} onChange={(event) => setLocation((current) => ({ ...current, district: event.target.value }))} /></label><label>Гарал, үүсэл<input name="origin" maxLength={120} value={location.origin} onChange={(event) => setLocation((current) => ({ ...current, origin: event.target.value }))} /></label></div>

@@ -12,17 +12,19 @@ export type IntakeCustomerOption = {
   origin: string | null;
 };
 
-export function CustomerCombobox({ customers, value, onChange }: {
+export function CustomerCombobox({ customers, value, onChange, inputId: suppliedInputId }: {
   customers: IntakeCustomerOption[];
   value: string;
   onChange(customer: IntakeCustomerOption | null): void;
+  inputId?: string;
 }) {
-  const inputId = useId();
+  const generatedInputId = useId();
+  const inputId = suppliedInputId ?? generatedInputId;
   const root = useRef<HTMLDivElement>(null);
   const selected = customers.find((customer) => customer.id === value) ?? null;
-  const [query, setQuery] = useState(selected?.displayName ?? "");
+  const selectedName = selected?.displayName ?? "";
+  const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
-  useEffect(() => { setQuery(selected?.displayName ?? ""); }, [selected?.displayName]);
   useEffect(() => {
     const close = (event: MouseEvent) => { if (event.target instanceof Node && !root.current?.contains(event.target)) setOpen(false); };
     document.addEventListener("mousedown", close);
@@ -33,7 +35,7 @@ export function CustomerCombobox({ customers, value, onChange }: {
   function select(customer: IntakeCustomerOption) { onChange(customer); setQuery(customer.displayName); setOpen(false); }
   return <div className="customer-combobox" ref={root}>
     <input id={inputId} role="combobox" aria-autocomplete="list" aria-expanded={open} aria-controls={`${inputId}-listbox`}
-      placeholder="Нэр, регистрээр хайх" value={query} onFocus={() => setOpen(true)}
+      placeholder="Нэр, регистрээр хайх" value={open ? query : selectedName || query} onFocus={() => { setQuery(selectedName || query); setOpen(true); }}
       onChange={(event) => { setQuery(event.target.value); setOpen(true); if (selected && event.target.value !== selected.displayName) onChange(null); }}
       onKeyDown={(event) => { if (event.key === "Escape") setOpen(false); if (event.key === "Enter" && options.length === 1) { event.preventDefault(); select(options[0]); } }} required />
     {open && <div id={`${inputId}-listbox`} className="customer-combobox-options" role="listbox" aria-label="Харилцагч сонгох">
