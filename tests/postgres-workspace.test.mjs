@@ -102,6 +102,7 @@ test("PostgreSQL routes enforce tenant scope and persist staff and intake audits
     const customerResponse = await request("/api/v1/customers", le, "POST", { type: "legal_entity", displayName: "SQL Mining Company", registrationNumber: "1234567" });
     assert.equal(customerResponse.status, 201);
     const customer = (await customerResponse.json()).record;
+    assert.equal((await request("/api/v1/customers", le, "POST", { type: "legal_entity", displayName: "sql mining company", registrationNumber: "1234567" })).status, 409);
     const customerDetail = (await (await request(`/api/v1/customers/${customer.id}`, le)).json()).data;
     assert.equal(customerDetail.registrationNumber, "1234567");
     const customerUpdate = await request(`/api/v1/customers/${customer.id}`, le, "PATCH", {

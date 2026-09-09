@@ -78,6 +78,13 @@
       "when": 1788732000000,
       "tag": "0010_integration_publications",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1788961761000,
+      "tag": "0011_unique_legal_entity_customer",
+      "breakpoints": true
     }
   ]
 }

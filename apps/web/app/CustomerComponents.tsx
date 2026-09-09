@@ -2,8 +2,15 @@
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import type { CreateCustomerInput, CustomerDetail, CustomerRecord } from "../../../packages/shared/src";
+import locationData from "./location-data.json";
 import { WorkspaceLoadingSkeleton } from "./workspace/WorkspaceLoadingSkeleton";
 import { api } from "./workspace/api";
+
+const mongolianCollator = new Intl.Collator("mn");
+const provinceOptions = [...locationData.provinces].sort((left, right) => {
+  const priority = Number(!/хот/i.test(left.name)) - Number(!/хот/i.test(right.name));
+  return priority || mongolianCollator.compare(left.name, right.name);
+});
 
 export function CustomersView({
   customers,
@@ -252,6 +259,14 @@ export function CreateCustomerDialog({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [customerType, setCustomerType] = useState<"individual" | "legal_entity">("individual");
+  const [provinceId, setProvinceId] = useState("");
+  const [districtId, setDistrictId] = useState("");
+  const [showDistrictGuidance, setShowDistrictGuidance] = useState(false);
+  const selectedProvince = provinceOptions.find((province) => province.id === provinceId);
+  const districtOptions = locationData.districts
+    .filter((district) => district.provinceId === provinceId)
+    .sort((left, right) => mongolianCollator.compare(left.name, right.name));
+  const selectedDistrict = districtOptions.find((district) => district.id === districtId);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -336,7 +351,7 @@ export function CreateCustomerDialog({
             </label>
             <label>
               <span>Регистр / байгууллагын дугаар</span>
-              <input name="registrationNumber" type="text" />
+              <input name="registrationNumber" required={customerType === "legal_entity"} type="text" />
             </label>
             <label>
               <span>Имэйл</span>
@@ -346,17 +361,15 @@ export function CreateCustomerDialog({
               <span>Утас</span>
               <input name="phone" inputMode="tel" type="text" />
             </label>
-            {customerType === "individual" && <>
-              <label><span>Аймаг / хот</span><input name="province" type="text" maxLength={120} /></label>
-              <label><span>Сум / дүүрэг</span><input name="district" type="text" maxLength={120} /></label>
-            </>}
+            <input name="province" type="hidden" value={selectedProvince?.name ?? ""} />
+            <input name="district" type="hidden" value={selectedDistrict?.name ?? ""} />
+            <label><span>Аймаг / хот</span><select aria-label="Аймаг эсвэл хот" value={provinceId} onChange={(event) => { setProvinceId(event.currentTarget.value); setDistrictId(""); setShowDistrictGuidance(false); }}><option value="">Сонгоно уу</option>{provinceOptions.map((province) => <option key={province.id} value={province.id}>{province.name}</option>)}</select></label>
+            <label><span>Сум / дүүрэг</span><select aria-label="Сум эсвэл дүүрэг" aria-describedby={!provinceId ? "district-guidance" : undefined} value={districtId} onFocus={() => { if (!provinceId) setShowDistrictGuidance(true); }} onMouseDown={() => { if (!provinceId) setShowDistrictGuidance(true); }} onChange={(event) => setDistrictId(event.currentTarget.value)}><option value="">{provinceId ? "Сонгоно уу" : "Эхлээд аймаг / хот сонгоно уу"}</option>{districtOptions.map((district) => <option key={district.id} value={district.id}>{district.name}</option>)}</select>{!provinceId && <small id="district-guidance" className={`field-guidance${showDistrictGuidance ? " is-visible" : ""}`}>Эхлээд Аймаг / хот сонгоно уу.</small>}</label>
             {customerType === "legal_entity" ? <>
               <label><span>Ордын нэр</span><input name="depositName" type="text" /></label>
               <label><span>Байгууллагын төрөл</span><input name="organizationKind" type="text" /></label>
               <label><span>Банкны нэр</span><input name="bankName" type="text" /></label>
               <label><span>Банкны данс</span><input name="bankAccount" type="text" /></label>
-              <label><span>Аймаг / нийслэл</span><input name="province" type="text" /></label>
-              <label><span>Сум / дүүрэг</span><input name="district" type="text" /></label>
               <label><span>Баг</span><input name="bag" type="text" /></label>
               <label><span>Хаяг / байршил</span><input name="address" type="text" /></label>
               <label><span>Салбар байгууллага</span><input name="branchName" type="text" /></label>

@@ -35,6 +35,7 @@ const CUSTOMER_WRITE_ROLES = new Set(["system_admin", "assay_admin", "lab_manage
 const inMemoryCustomers: CustomerRecord[] = [];
 const customerOwners = new Map<string, string>();
 const initialBullionNumbers = new Map<string, number>();
+const inMemoryLegalEntityKeys = new Set<string>();
 export const localCustomerInitialNumber = (id: string) => initialBullionNumbers.get(id) ?? 1;
 
 export function localCustomerForCenter(id: string, user: AuthenticatedUser): CustomerRecord | undefined {
@@ -111,6 +112,10 @@ customerRoutes.post("/", async (c) => {
     ? await createCustomerInDatabase(createDatabase(c.env.DATABASE_URL), user, input, c.env.FIELD_ENCRYPTION_KEY)
     : await createCustomerInMemory(input);
 
+  if (record === "duplicate") {
+    return c.json({ ok: false, message: "Энэ нэр болон регистрийн дугаартай байгууллага бүртгэлтэй байна." }, 409);
+  }
+
   if (!c.env.DATABASE_URL) {
     customerOwners.set(record.id, user.organizationId);
     const initial = input.organizationProfile?.mineInitialNumber ?? "";
@@ -133,6 +138,9 @@ customerRoutes.patch("/:id", async (c) => {
 
   const db = createDatabase(c.env.DATABASE_URL);
   const registrationHash = input.registrationNumber ? await sha256Base64Url(input.registrationNumber) : null;
+  if (await hasDuplicateLegalEntity(db, user, input, registrationHash, id)) {
+    return c.json({ ok: false, message: "Энэ нэр болон регистрийн дугаартай байгууллага бүртгэлтэй байна." }, 409);
+  }
   const phoneHash = input.phone ? await sha256Base64Url(input.phone) : null;
   const [registrationNumberEncrypted, phoneEncrypted, emailEncrypted, addressEncrypted] = await Promise.all([
     input.registrationNumber ? protectSensitiveValue(input.registrationNumber, c.env.FIELD_ENCRYPTION_KEY, maskSensitiveValue) : null,
@@ -267,12 +275,13 @@ async function createCustomerInDatabase(
   user: AuthenticatedUser,
   input: CreateCustomerInput,
   encryptionKey?: string,
-): Promise<CustomerRecord> {
+): Promise<CustomerRecord | "duplicate"> {
   const id = crypto.randomUUID();
   const registrationHash = input.registrationNumber
     ? await sha256Base64Url(input.registrationNumber)
     : null;
   const phoneHash = input.phone ? await sha256Base64Url(input.phone) : null;
+  if (await hasDuplicateLegalEntity(db, user, input, registrationHash)) return "duplicate";
   const [registrationNumberEncrypted, phoneEncrypted, emailEncrypted, addressEncrypted] = await Promise.all([
     input.registrationNumber ? protectSensitiveValue(input.registrationNumber, encryptionKey, maskSensitiveValue) : null,
     input.phone ? protectSensitiveValue(input.phone, encryptionKey, maskPhone) : null,
@@ -307,6 +316,7 @@ async function createCustomerInDatabase(
       ${user.organizationId},
       ${user.id}
     )
+    ON CONFLICT DO NOTHING
     RETURNING
       id,
       type,
@@ -321,9 +331,7 @@ async function createCustomerInDatabase(
   `);
   const [record] = await Promise.all(readRows(result).map((row) => mapCustomerRow(row, encryptionKey)));
 
-  if (!record) {
-    throw new Error("Failed to create customer.");
-  }
+  if (!record) return "duplicate";
 
   const profile: OrganizationProfileInput | undefined = input.type === "legal_entity"
     ? input.organizationProfile
@@ -349,6 +357,27 @@ async function createCustomerInDatabase(
   return { ...record, province: profile?.province, district: profile?.district };
 }
 
+async function hasDuplicateLegalEntity(
+  db: AppDatabase,
+  user: AuthenticatedUser,
+  input: CreateCustomerInput,
+  registrationHash: string | null,
+  excludeCustomerId?: string,
+): Promise<boolean> {
+  if (input.type !== "legal_entity" || !registrationHash) return false;
+  const duplicate = readRows(await db.execute<{ id: string }>(sql`
+    SELECT c.id
+    FROM customers c
+    WHERE c.assay_center_id = ${user.organizationId}::uuid
+      AND c.type = 'legal_entity'
+      AND c.registration_number_hash = ${registrationHash}
+      AND lower(c.display_name) = lower(${input.displayName.trim()})
+      ${excludeCustomerId ? sql`AND c.id <> ${excludeCustomerId}::uuid` : sql``}
+    LIMIT 1
+  `))[0];
+  return !!duplicate;
+}
+
 function listCustomersFromMemory(): CustomerRecord[] {
   const derivedCustomers = inMemoryAssays.map((assay) => ({
     id: `derived-${assay.id}`,
@@ -367,7 +396,9 @@ function listCustomersFromMemory(): CustomerRecord[] {
   return allCustomers.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
-async function createCustomerInMemory(input: CreateCustomerInput): Promise<CustomerRecord> {
+async function createCustomerInMemory(input: CreateCustomerInput): Promise<CustomerRecord | "duplicate"> {
+  const legalEntityKey = input.type === "legal_entity" ? `${input.displayName.trim().toLocaleLowerCase("mn")}:${input.registrationNumber?.trim() ?? ""}` : null;
+  if (legalEntityKey && inMemoryLegalEntityKeys.has(legalEntityKey)) return "duplicate";
   const now = new Date().toISOString();
   const record: CustomerRecord = {
     id: crypto.randomUUID(),
@@ -387,6 +418,7 @@ async function createCustomerInMemory(input: CreateCustomerInput): Promise<Custo
   };
 
   inMemoryCustomers.unshift(record);
+  if (legalEntityKey) inMemoryLegalEntityKeys.add(legalEntityKey);
   return record;
 }
 
@@ -428,6 +460,7 @@ function normalizeOrganizationProfile(value: Record<string, unknown>) {
 function validateCreateCustomerInput(input: CreateCustomerInput): string | null {
   if ((input.province?.length ?? 0) > 120 || (input.district?.length ?? 0) > 120) return "Байршлын мэдээлэл 120 тэмдэгтээс хэтрэхгүй байна.";
   if (input.displayName.length < 2) return "Харилцагчийн нэрийг зөв оруулна уу.";
+  if (input.type === "legal_entity" && !input.registrationNumber) return "Байгууллагын регистрийн дугаарыг оруулна уу.";
   if (input.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(input.email)) {
     return "Имэйл хаягийг зөв оруулна уу.";
   }

@@ -643,6 +643,18 @@ h2 {
 
 .customer-detail-grid dd { color: #1f2937; margin: 0; overflow-wrap: anywhere; }
 
+.field-guidance {
+  color: #8a5a12;
+  font-size: 13px;
+  line-height: 1.35;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-height 160ms ease, opacity 160ms ease;
+}
+
+.field-guidance.is-visible { max-height: 24px; opacity: 1; }
+
 .audit-table .table-row {
   align-items: flex-start;
   grid-template-columns: minmax(210px, 0.8fr) minmax(360px, 1.3fr) 170px;
