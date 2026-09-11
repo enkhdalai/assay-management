@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { ExternalLink, PlugZap, RefreshCw, Save } from "lucide-react";
+import { PlugZap, RefreshCw, Save } from "lucide-react";
 import { api } from "./api";
 import { WorkspaceLoadingSkeleton } from "./WorkspaceLoadingSkeleton";
 import type { OrganizationRecord } from "../../../../packages/shared/src/organization-types";
@@ -36,6 +36,7 @@ export function IntegrationSettingsWorkspace() {
     {error && <p role="alert" className="login-error">{error}</p>}
     {loading ? <WorkspaceLoadingSkeleton rows={3} /> : <>
       <MonPassLaunchTest />
+      <EsignLaunchTest />
       <CreateIntegrationClient organizations={organizations} onCreated={(client) => setClients((current) => [...current, client])} />
       {clients.length === 0 ? <p className="empty-state">BOM эсвэл арилжааны банкны API client бүртгэгдээгүй байна.</p> : <div className="integration-client-list">
       {clients.map((client) => <IntegrationClientCard key={client.id} client={client} onSaved={(updated) => setClients((current) => current.map((entry) => entry.id === updated.id ? updated : entry))} />)}
@@ -45,12 +46,7 @@ export function IntegrationSettingsWorkspace() {
 }
 
 function MonPassLaunchTest() {
-  const [attempted, setAttempted] = useState(false);
   const [connection, setConnection] = useState<"idle" | "connecting" | "connected" | "unavailable">("idle");
-  // This is deliberately non-production data. The real signature flow uses a
-  // short-lived server request ID rather than exposing certificate data in a URI.
-  const payload = typeof window === "undefined" ? "" : window.btoa("assay-center-monpass-launch-test-v1");
-  const uri = `monpass://sign?data=${payload}`;
   function testLocalAgent() {
     setConnection("connecting");
     let opened = false;
@@ -71,17 +67,70 @@ function MonPassLaunchTest() {
     <div><p className="eyebrow">Тоон гарын үсгийн холболт</p><h3 id="monpass-launch-title">MonPass Client туршилт</h3>
       <p>Windows дээр MonPass Client суусан эсэхийг шалгана. Зөвхөн туршилтын мэдээлэл илгээнэ.</p></div>
     <div className="monpass-launch-actions">
-      <a className="primary-button" href={uri} onClick={() => setAttempted(true)}><ExternalLink size={18} />MonPass Client нээх</a>
       <button type="button" className="secondary-button" disabled={connection === "connecting"} onClick={testLocalAgent}><PlugZap size={18} />{connection === "connecting" ? "Холбогдож байна" : "Local agent шалгах"}</button>
       <code>WSS: wss://127.0.0.1:43871/socket</code>
     </div>
-    {attempted && <p className="field-hint">Windows-ийн зөвшөөрлийн цонх гарч, MonPass Client нээгдсэн бол холболтын протокол бүртгэгдсэн байна.</p>}
     {connection === "connected" && <p className="monpass-connection connected" role="status">MonPass local agent-т амжилттай холбогдлоо.</p>}
     {connection === "unavailable" && <p className="monpass-connection unavailable" role="alert">Холболт амжилтгүй боллоо. MonPass Client ажиллаж, token холбогдсон эсэхийг шалгана уу.</p>}
   </section>;
 }
 
-function CreateIntegrationClient({ organizations, onCreated }: { organizations: OrganizationRecord[]; onCreated(client: IntegrationClient): void }) {
+function EsignLaunchTest() {
+  const [data, setData] = useState("assay-center-esign-test");
+  const [connection, setConnection] = useState<"idle" | "connecting" | "waiting" | "connected" | "unavailable">("idle");
+  const [result, setResult] = useState("");
+
+  function signWithEsign() {
+    const value = data.trim();
+    if (!value) { setResult("Гарын үсэг зурах утгаа оруулна уу."); return; }
+    if (value.length > 131072) { setResult("Утгын хэмжээ 131072 тэмдэгтээс хэтэрсэн байна."); return; }
+
+    setConnection("connecting");
+    setResult("");
+    let receivedResponse = false;
+    let socket: WebSocket | null = null;
+    const timeout = window.setTimeout(() => {
+      if (!receivedResponse) setConnection("unavailable");
+      socket?.close();
+    }, 60_000);
+    const finish = () => window.clearTimeout(timeout);
+
+    try {
+      socket = new WebSocket("ws://127.0.0.1:59001");
+      socket.onopen = () => {
+        setConnection("waiting");
+        socket?.send(JSON.stringify({ type: "055a3cb74cc69e86", data: value }));
+      };
+      socket.onmessage = (event) => {
+        receivedResponse = true;
+        finish();
+        const response = typeof event.data === "string" ? event.data : "eSign Client хариу илгээлээ.";
+        try { setResult(JSON.stringify(JSON.parse(response), null, 2)); }
+        catch { setResult(response); }
+        setConnection("connected");
+        socket?.close(1000, "Response received");
+      };
+      socket.onerror = () => { if (!receivedResponse) { finish(); setConnection("unavailable"); } };
+      socket.onclose = () => { if (!receivedResponse && connection !== "unavailable") { finish(); setConnection("unavailable"); } };
+    } catch {
+      finish();
+      setConnection("unavailable");
+    }
+  }
+
+  return <section className="monpass-launch-test" aria-labelledby="esign-launch-title">
+    <div><p className="eyebrow">Тоон гарын үсгийн холболт</p><h3 id="esign-launch-title">TridumKey eSign туршилт</h3>
+      <p>Токены ПИН болон сертификат сонгох цонх eSign Client дээр нээгдэнэ. Энэ туршилтын хариу серверт хадгалагдахгүй.</p></div>
+    <label>Гарын үсэг зурах утга<textarea value={data} onChange={(event) => setData(event.target.value)} maxLength={131072} rows={3} disabled={connection === "connecting" || connection === "waiting"} /></label>
+    <div className="monpass-launch-actions">
+      <button type="button" className="secondary-button" disabled={connection === "connecting" || connection === "waiting"} onClick={signWithEsign}><PlugZap size={18} />{connection === "connecting" ? "Холбогдож байна" : connection === "waiting" ? "eSign Client дээр баталгаажуулна уу" : "eSign-аар гарын үсэг зурах"}</button>
+      <code>WS: ws://127.0.0.1:59001</code>
+    </div>
+    {connection === "connected" && <p className="monpass-connection connected" role="status">eSign Client-ээс гарын үсгийн хариу ирлээ.</p>}
+    {connection === "unavailable" && <p className="monpass-connection unavailable" role="alert">eSign Client-т холбогдож чадсангүй. Client ажиллаж, токен залгаатай эсэхийг шалгана уу.</p>}
+    {result && <pre className="monpass-connection" aria-live="polite">{result}</pre>}
+  </section>;
+}function CreateIntegrationClient({ organizations, onCreated }: { organizations: OrganizationRecord[]; onCreated(client: IntegrationClient): void }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const eligible = organizations.filter((organization) => organization.type === "bank_of_mongolia" || organization.type === "commercial_bank");
