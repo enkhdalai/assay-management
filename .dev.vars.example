@@ -11,3 +11,11 @@ RATE_LIMITING_ENABLED=false
 # Bank of Mongolia server-to-server integration. Do not commit real values.
 BOM_API_CLIENT_ID=
 BOM_API_SIGNING_SECRET=
+# MonPass/eSign external trust validation. Obtain the current PEM files from
+# MonPass and add the values as Cloudflare Worker secrets in production.
+MONPASS_TRUST_ROOT_CA_PEM=
+MONPASS_TRUST_ISSUING_CA_PEM=
+MONPASS_TRUST_CLASS2_4_CA_PEM=
+# Use the OCSP URL in the signer certificate's Authority Information Access
+# extension. Do not substitute a responder for a different issuing CA.
+MONPASS_OCSP_URL=

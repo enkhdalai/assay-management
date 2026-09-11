@@ -31,7 +31,8 @@ export async function recordVerifiedCertificateSignature(
         signer_certificate = ${signature.signerCertificate}, certificate_chain = ${JSON.stringify(signature.certificateChain)}::jsonb,
         signature_algorithm = ${signature.signatureAlgorithm}, signed_at = ${signature.signedAt}::timestamptz,
         validation_evidence = ${JSON.stringify(signature.validationEvidence)}::jsonb
-      WHERE id = ${signature.certificateId}::uuid AND signature_status IN ('unsigned', 'signing')
+      WHERE id = ${signature.certificateId}::uuid
+        AND signature_status IN ('unsigned', 'signing', 'cryptographically_verified')
         AND document_hash IS NOT NULL AND manifest IS NOT NULL
       RETURNING batch_id
     )

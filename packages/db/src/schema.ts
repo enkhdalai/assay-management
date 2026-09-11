@@ -393,7 +393,7 @@ export const bullionCertificates = pgTable("bullion_certificates", {
   manifest: jsonb("manifest"),
   documentHash: varchar("document_hash", { length: 64 }),
   verificationId: uuid("verification_id").defaultRandom().notNull(),
-  signatureStatus: varchar("signature_status", { length: 24 }).default("unsigned").notNull(),
+  signatureStatus: varchar("signature_status", { length: 48 }).default("unsigned").notNull(),
   signatureProvider: varchar("signature_provider", { length: 48 }),
   providerTransactionId: varchar("provider_transaction_id", { length: 255 }),
   signatureValue: text("signature_value"),

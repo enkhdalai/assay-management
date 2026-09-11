@@ -18,6 +18,8 @@ import type { AnonymousSample } from "../../../../packages/shared/src/bullion-ty
 import { calculateBullion, BULLION_CALCULATION_VERSION } from "../../../../packages/shared/src/bullion-calculation";
 import { issueCertificate } from "./certificates";
 import { verifyMonpassSignature } from "../signatures/monpass";
+import { verifyMonpassCertificateTrust } from "../signatures/monpass-trust";
+import { recordVerifiedCertificateSignature } from "../signatures/certificates";
 
 export const bullionRoutes = new Hono<{ Bindings: EdgeApiEnv }>();
 
@@ -180,8 +182,8 @@ bullionRoutes.post("/batches/:id/signature-evidence", async (c) => {
     return c.json({ ok: false, message: "eSign-ийн хариу дутуу байна." }, 400);
   }
   const db = createDatabase(c.env.DATABASE_URL);
-  const [certificate] = readRows(await db.execute<{ documentHash: string }>(sql`
-    SELECT document_hash AS "documentHash" FROM bullion_certificates
+  const [certificate] = readRows(await db.execute<{ id: string; documentHash: string }>(sql`
+    SELECT id, document_hash AS "documentHash" FROM bullion_certificates
     WHERE batch_id = ${batchId}::uuid AND assay_center_id = ${user.organizationId}::uuid
       AND signature_status IN ('unsigned', 'signing') AND document_hash IS NOT NULL AND manifest IS NOT NULL
     LIMIT 1
@@ -190,6 +192,31 @@ bullionRoutes.post("/batches/:id/signature-evidence", async (c) => {
   let verified;
   try { verified = await verifyMonpassSignature(body.providerResponse, certificate.documentHash); }
   catch (error) { return c.json({ ok: false, message: error instanceof Error ? error.message : "eSign-ийн гарын үсэг баталгаажсангүй." }, 400); }
+  let validationEvidence: Record<string, unknown> = verified.validationEvidence;
+  try {
+    const trust = await verifyMonpassCertificateTrust(verified.signerCertificate, c.env);
+    const signed = await recordVerifiedCertificateSignature(db, {
+      certificateId: certificate.id,
+      provider: verified.provider,
+      providerTransactionId: verified.validationEvidence.tokenSerialNumber,
+      signatureValue: verified.signatureValue,
+      signerCertificate: verified.signerCertificate,
+      certificateChain: trust.certificateChain,
+      signatureAlgorithm: verified.signatureAlgorithm,
+      signedAt: verified.signedAt,
+      validationEvidence: { ...verified.validationEvidence, ...trust.validationEvidence },
+    });
+    if (!signed) return c.json({ ok: false, message: "Гэрчилгээ гарын үсэг зурахад бэлэн биш байна." }, 409);
+    return c.json({ ok: true, data: { signatureStatus: "signed" } });
+  } catch (error) {
+    // The signature itself is retained as evidence, but it cannot be published
+    // until the pinned CA chain and a fresh OCSP result are both verified.
+    validationEvidence = {
+      ...verified.validationEvidence,
+      trust: "pending_or_failed",
+      trustError: error instanceof Error ? error.message : "MonPass итгэмжлэлийн шалгалт амжилтгүй боллоо.",
+    };
+  }
   const auditId = crypto.randomUUID();
   const entryHash = await sha256Base64Url(JSON.stringify({ auditId, batchId, certificateHash: certificate.documentHash, signature: verified.signatureValue, signedAt: verified.signedAt }));
   const result = await db.batch([
@@ -200,7 +227,7 @@ bullionRoutes.post("/batches/:id/signature-evidence", async (c) => {
         SET signature_status = 'cryptographically_verified', signature_provider = ${verified.provider},
           signature_value = ${verified.signatureValue}, signer_certificate = ${verified.signerCertificate},
           signature_algorithm = ${verified.signatureAlgorithm}, signed_at = ${verified.signedAt}::timestamptz,
-          validation_evidence = ${JSON.stringify(verified.validationEvidence)}::jsonb
+          validation_evidence = ${JSON.stringify(validationEvidence)}::jsonb
         FROM bullion_intake_batches batch
         WHERE certificate.batch_id = ${batchId}::uuid AND batch.id = certificate.batch_id
           AND certificate.assay_center_id = ${user.organizationId}::uuid

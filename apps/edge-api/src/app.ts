@@ -32,6 +32,12 @@ export type EdgeApiEnv = {
   RATE_LIMITING_ENABLED?: string;
   BOM_API_CLIENT_ID?: string;
   BOM_API_SIGNING_SECRET?: string;
+  // Public CA material used to establish the MonPass/eSign certificate path.
+  // The leaf certificate and private key remain in the user's token.
+  MONPASS_TRUST_ROOT_CA_PEM?: string;
+  MONPASS_TRUST_ISSUING_CA_PEM?: string;
+  MONPASS_TRUST_CLASS2_4_CA_PEM?: string;
+  MONPASS_OCSP_URL?: string;
   IMAGES?: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
