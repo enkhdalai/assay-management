@@ -15,7 +15,7 @@ ALTER TABLE "bullion_certificates"
   ADD COLUMN "void_reason" varchar(500);
 --> statement-breakpoint
 ALTER TABLE "bullion_certificates" ADD CONSTRAINT "bullion_certificates_signature_status_valid"
-  CHECK ("signature_status" IN ('unsigned', 'signing', 'signed', 'failed', 'voided', 'superseded'));
+  CHECK ("signature_status" IN ('unsigned', 'signing', 'cryptographically_verified', 'signed', 'failed', 'voided', 'superseded'));
 --> statement-breakpoint
 ALTER TABLE "bullion_certificates" ADD CONSTRAINT "bullion_certificates_document_hash_valid"
   CHECK ("document_hash" IS NULL OR "document_hash" ~ '^[0-9a-f]{64}$');
