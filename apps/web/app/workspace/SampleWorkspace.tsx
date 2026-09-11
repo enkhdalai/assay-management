@@ -59,13 +59,19 @@ function approvalDate(value?: string | null) {
   return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}`;
 }
 
+let esignSessionActive = false;
+
 function signHashWithEsign(documentHash: string): Promise<string> {
+  if (esignSessionActive) return Promise.reject(new Error("eSign гарын үсэг зурах ажиллагаа аль хэдийн эхэлсэн байна."));
+  esignSessionActive = true;
   return new Promise((resolve, reject) => {
     let settled = false;
     let socket: WebSocket | null = null;
+    let requestSent = false;
     const finish = (callback: () => void) => {
       if (settled) return;
       settled = true;
+      esignSessionActive = false;
       window.clearTimeout(timeout);
       socket?.close(1000, "Signature response received");
       callback();
@@ -73,10 +79,17 @@ function signHashWithEsign(documentHash: string): Promise<string> {
     const timeout = window.setTimeout(() => finish(() => reject(new Error("eSign Client-ээс хариу ирсэнгүй. Токен болон PIN цонхыг шалгана уу."))), 60_000);
     try {
       socket = new WebSocket("ws://127.0.0.1:59001");
-      socket.onopen = () => socket?.send(JSON.stringify({ type: "055a3cb74cc69e86", data: documentHash }));
+      socket.onopen = () => {
+        if (requestSent || settled) return;
+        requestSent = true;
+        socket?.send(JSON.stringify({ type: "055a3cb74cc69e86", data: documentHash }));
+      };
       socket.onmessage = (event) => {
         const value = typeof event.data === "string" ? event.data : "";
         if (!value) return finish(() => reject(new Error("eSign Client хоосон хариу өглөө.")));
+        let response: { status?: unknown } | null = null;
+        try { response = JSON.parse(value) as { status?: unknown }; } catch { return finish(() => reject(new Error("eSign Client-ийн хариу JSON форматтай биш байна."))); }
+        if (response.status !== "success") return;
         finish(() => resolve(value));
       };
       socket.onerror = () => finish(() => reject(new Error("eSign Client-т холбогдож чадсангүй. Client ажиллаж, токен залгаатай эсэхийг шалгана уу.")));
@@ -222,6 +235,7 @@ function BatchReviewDialog({ batch, centerType, onClose, onSaved }: { batch: Man
 
 function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded = false }: { sample: AnonymousSample; manager: boolean; centerType?: string; onClose(): void; onSaved(): void; embedded?: boolean }) {
   const [saving, setSaving] = useState(false);
+  const signingRef = useRef(false);
   const [error, setError] = useState("");
   const examination = sample.examination;
   const [reexamination, setReexamination] = useState(examination?.reexaminationRequested ?? false);
@@ -307,7 +321,8 @@ function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded 
     catch (error) { setError((error as Error).message); } finally { setSaving(false); }
   }
   async function signCertificateWithEsign() {
-    if (!sample.batchId) return;
+    if (!sample.batchId || signingRef.current) return;
+    signingRef.current = true;
     setSaving(true); setError("");
     try {
       if (!sample.certificateNo) {
@@ -317,7 +332,7 @@ function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded 
       const response = await signHashWithEsign(payload.documentHash);
       await api(`/api/v1/bullion/batches/${sample.batchId}/signature-evidence`, { method: "POST", body: JSON.stringify({ providerResponse: response }) });
       onSaved();
-    } catch (error) { setError((error as Error).message); } finally { setSaving(false); }
+    } catch (error) { setError((error as Error).message); } finally { signingRef.current = false; setSaving(false); }
   }
   async function printArchiveReport() {
     if (!sample.batchId) return;
