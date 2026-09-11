@@ -92,6 +92,13 @@
       "when": 1789142400000,
       "tag": "0012_certificate_signature_evidence",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1789142500000,
+      "tag": "0013_widen_certificate_signature_status",
+      "breakpoints": true
     }
   ]
 }
