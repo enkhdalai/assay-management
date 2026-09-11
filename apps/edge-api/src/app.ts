@@ -107,6 +107,9 @@ edgeApi.onError((error, c) => {
   console.error("Assay API request failed", {
     requestId,
     name: error instanceof Error ? error.name : "UnknownError",
+    // This stays in the server log. Neon error details are essential for
+    // diagnosing operational SQL failures, but must not be returned to clients.
+    message: error instanceof Error ? error.message : String(error),
     category,
   });
   const response = c.json(

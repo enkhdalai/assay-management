@@ -211,8 +211,8 @@ bullionRoutes.post("/batches/:id/signature-evidence", async (c) => {
         INSERT INTO audit_logs (id, actor_user_id, actor_organization_id, action, entity_type, entity_id, new_values, reason, entry_hash)
         SELECT ${auditId}::uuid, ${user.id}::uuid, ${user.organizationId}::uuid,
           'bullion_certificate.signature_evidence_received', 'bullion_certificates', id,
-          jsonb_build_object('provider', ${verified.provider}, 'signedAt', ${verified.signedAt},
-            'certificateSerialNumber', ${verified.validationEvidence.certificateSerialNumber}),
+          jsonb_build_object('provider', ${verified.provider}::text, 'signedAt', ${verified.signedAt}::timestamptz,
+            'certificateSerialNumber', ${verified.validationEvidence.certificateSerialNumber}::text),
           'MonPass RSA signature verified; CA chain and revocation validation pending', ${entryHash}
         FROM saved
       ) SELECT id FROM saved
