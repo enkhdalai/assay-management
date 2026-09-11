@@ -23,6 +23,13 @@ type ManagerBatch = {
   completedAt: string | null;
 };
 const examinationNumber = (value: string) => value.padStart(4, "0");
+function bullionDisplayNumber(value?: string | null, fallback = "-") {
+  const number = value?.trim();
+  if (!number) return fallback;
+  // Legacy records stored the intake's 55-prefixed registration number here.
+  const shortNumber = /^55(\d+)$/.exec(number)?.[1] ?? number;
+  return /^\d+$/.test(shortNumber) ? shortNumber.padStart(4, "0") : shortNumber;
+}
 function batchStatus(samples: AnonymousSample[]) {
   if (samples.every((sample) => sample.status === "approved")) return "approved";
   if (samples.some((sample) => sample.status === "submitted")) return "submitted";
@@ -172,7 +179,7 @@ function BatchReviewDialog({ batch, centerType, onClose, onSaved }: { batch: Man
         <h2>Гулдмайн №</h2>
         <div className="chemist-sample-options" role="listbox" aria-label="Шинжилгээ сонгох">
           {batch.samples.map((sample, index) => <button key={sample.id} type="button" role="option" aria-selected={activeSample?.id === sample.id} className="chemist-sample-option" onClick={() => setActiveSampleId(sample.id)}>
-            <span>{index + 1}</span><strong>{sample.bullionNo ?? String(index + 1).padStart(4, "0")}</strong><StatusBadge status={sample.status} />
+            <span>{index + 1}</span><strong>{bullionDisplayNumber(sample.bullionNo, String(index + 1).padStart(4, "0"))}</strong><StatusBadge status={sample.status} />
           </button>)}
         </div>
       </aside>
@@ -315,7 +322,7 @@ function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded 
     <dl className="examination-metadata">
       <div><dt>Огноо</dt><dd>{workflowDate(sample.receivedAt, false)}</dd></div>
       <div><dt>Дээжийн жин /мг/</dt><dd>{sample.sampleWeightMilligrams}</dd></div>
-      <div><dt>{manager ? "Гулдмайн №" : "Шинжилгээний №"}</dt><dd>{manager ? sample.bullionNo ?? "-" : examinationNumber(sample.analysisNo)}</dd></div>
+      <div><dt>{manager ? "Гулдмайн №" : "Шинжилгээний №"}</dt><dd>{manager ? bullionDisplayNumber(sample.bullionNo) : examinationNumber(sample.analysisNo)}</dd></div>
       <div><dt>Делта</dt><dd>{sample.delta}</dd></div>
     </dl>
     <form ref={formRef} className="workspace-form examination-form" autoComplete="off" onSubmit={submit}><fieldset disabled={saving}>
