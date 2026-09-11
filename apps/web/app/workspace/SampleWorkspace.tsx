@@ -59,6 +59,36 @@ function approvalDate(value?: string | null) {
   return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}`;
 }
 
+function signHashWithEsign(documentHash: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let socket: WebSocket | null = null;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      socket?.close(1000, "Signature response received");
+      callback();
+    };
+    const timeout = window.setTimeout(() => finish(() => reject(new Error("eSign Client-ээс хариу ирсэнгүй. Токен болон PIN цонхыг шалгана уу."))), 60_000);
+    try {
+      socket = new WebSocket("ws://127.0.0.1:59001");
+      socket.onopen = () => socket?.send(JSON.stringify({ type: "055a3cb74cc69e86", data: documentHash }));
+      socket.onmessage = (event) => {
+        const value = typeof event.data === "string" ? event.data : "";
+        if (!value) return finish(() => reject(new Error("eSign Client хоосон хариу өглөө.")));
+        finish(() => resolve(value));
+      };
+      socket.onerror = () => finish(() => reject(new Error("eSign Client-т холбогдож чадсангүй. Client ажиллаж, токен залгаатай эсэхийг шалгана уу.")));
+      socket.onclose = () => {
+        if (!settled) finish(() => reject(new Error("eSign Client холболтыг хаалаа. Гарын үсэг зурах ажиллагааг дахин оролдоно уу.")));
+      };
+    } catch {
+      finish(() => reject(new Error("eSign Client-т холбогдож чадсангүй.")));
+    }
+  });
+}
+
 export function SampleWorkspace({ manager = false, centerType }: { manager?: boolean; centerType?: string }) {
   const [samples, setSamples] = useState<AnonymousSample[]>([]);
   const [selected, setSelected] = useState<AnonymousSample | null>(null);
@@ -276,11 +306,20 @@ function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded 
     try { await api(`/api/v1/bullion/samples/${sample.id}/approve`, { method: "POST", body: JSON.stringify({}) }); onSaved(); }
     catch (error) { setError((error as Error).message); } finally { setSaving(false); }
   }
-  async function finalizeCertificate() {
+  async function signCertificateWithEsign() {
     if (!sample.batchId) return;
     setSaving(true); setError("");
-    try { await api(`/api/v1/bullion/batches/${sample.batchId}/finalize`, { method: "POST", body: JSON.stringify({}) }); onSaved(); }
-    catch (error) { setError((error as Error).message); } finally { setSaving(false); }
+    try {
+      if (!sample.certificateNo) {
+        await api(`/api/v1/bullion/batches/${sample.batchId}/finalize`, { method: "POST", body: JSON.stringify({}) });
+      }
+      const { data: payload } = await api<{ data: { documentHash: string } }>(`/api/v1/bullion/batches/${sample.batchId}/signature-payload`);
+      const response = await signHashWithEsign(payload.documentHash);
+      await api(`/api/v1/bullion/batches/${sample.batchId}/signature-evidence`, {
+        method: "POST", body: JSON.stringify({ provider: "tridum", providerResponse: response }),
+      });
+      onSaved();
+    } catch (error) { setError((error as Error).message); } finally { setSaving(false); }
   }
   async function printArchiveReport() {
     if (!sample.batchId) return;
@@ -372,7 +411,7 @@ function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded 
       </fieldset>
       <div className="examination-actions">
         {!manager && sample.substitutedByName && sample.substitutedAt && <span className="substitute-notice">Шилжүүлсэн химич: <strong>{sample.substitutedByName}</strong> · <time dateTime={sample.substitutedAt}>{workflowDate(sample.substitutedAt)}</time></span>}
-        {manager ? <>{sample.status === "submitted" && <button className="primary-button" type="button" disabled={saving} onClick={() => void approve()}>Баталгаажуулах</button>}{sample.batchReadyForFinalization && !sample.certificateNo && <button className="primary-button" type="button" disabled={saving} onClick={() => void finalizeCertificate()}>Эцсийн гэрчилгээ батлах</button>}{sample.certificateNo && <><span className="certificate-ready">Гэрчилгээ № {sample.certificateNo}</span><button className="secondary-button" type="button" disabled={saving} onClick={() => void printArchiveReport()}>Архивын тайлан хэвлэх</button></>}</> : <>
+        {manager ? <>{sample.status === "submitted" && <button className="primary-button" type="button" disabled={saving} onClick={() => void approve()}>Баталгаажуулах</button>}{sample.batchReadyForFinalization && !sample.certificateNo && <button className="primary-button" type="button" disabled={saving} onClick={() => void signCertificateWithEsign()}>eSign-аар эцсийн гэрчилгээ батлах</button>}{sample.certificateNo && <><span className="certificate-ready">Гэрчилгээ № {sample.certificateNo}</span>{sample.certificateSignatureStatus === "unsigned" && <button className="primary-button" type="button" disabled={saving} onClick={() => void signCertificateWithEsign()}>eSign-аар гэрчилгээ батлах</button>}{sample.certificateSignatureStatus === "signing" && <span className="certificate-ready">eSign шалгалт хүлээгдэж байна</span>}{sample.certificateSignatureStatus === "signed" && <span className="certificate-ready">Дижитал гарын үсэг баталгаажсан</span>}<button className="secondary-button" type="button" disabled={saving} onClick={() => void printArchiveReport()}>Архивын тайлан хэвлэх</button></>}</> : <>
         <button className="secondary-button" type="button" disabled={saving || !editable || !canCalculate} onClick={checkCalculation}>Бодолт</button>
         <button className="secondary-button" type="button" disabled={saving || !editable || !canCalculate} onClick={checkCalculation}>Шалгах</button>
         <button className="primary-button" type="submit" value="draft" disabled={saving || !editable}>Хадгалах</button>

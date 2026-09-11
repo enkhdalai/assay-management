@@ -33,6 +33,13 @@ export async function sha256Base64Url(value: string): Promise<string> {
   return bytesToBase64Url(new Uint8Array(digest));
 }
 
+/** Lowercase SHA-256 digest used in externally verifiable documents. */
+export async function sha256Hex(value: string): Promise<string> {
+  const data = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 /** Produces a compact HMAC signature suitable for server-to-server requests. */
 export async function hmacSha256Base64Url(secret: string, value: string): Promise<string> {
   const key = await crypto.subtle.importKey(

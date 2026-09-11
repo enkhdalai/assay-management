@@ -49,7 +49,7 @@ test("PostgreSQL routes enforce tenant scope and persist staff and intake audits
   const originalFetch = globalThis.fetch;
   const sqlErrors = [];
   try {
-    for (const migration of ["0000_even_falcon.sql", "0001_flashy_william_stryker.sql", "0002_happy_glorian.sql", "0003_outgoing_gabe_jones.sql", "0004_request_certificates.sql", "0005_annual_certificate_numbers.sql", "0006_batch_registration_numbers.sql", "0007_oval_domino.sql", "0008_customer_assay_center_ownership.sql", "0009_bullion_examination_approval.sql", "0010_integration_publications.sql"]) {
+    for (const migration of ["0000_even_falcon.sql", "0001_flashy_william_stryker.sql", "0002_happy_glorian.sql", "0003_outgoing_gabe_jones.sql", "0004_request_certificates.sql", "0005_annual_certificate_numbers.sql", "0006_batch_registration_numbers.sql", "0007_oval_domino.sql", "0008_customer_assay_center_ownership.sql", "0009_bullion_examination_approval.sql", "0010_integration_publications.sql", "0011_unique_legal_entity_customer.sql", "0012_certificate_signature_evidence.sql"]) {
       await database.exec(await readFile(new URL(`../packages/db/drizzle/${migration}`, import.meta.url), "utf8"));
     }
     // Emulate Neon's HTTP wire format against a disposable PostgreSQL engine.
@@ -322,6 +322,9 @@ test("PostgreSQL routes enforce tenant scope and persist staff and intake audits
     const certificate = (await finalized.json()).data;
     assert.equal(certificate.certificateNo, "0001");
     assert.equal(certificate.entries.length, 8);
+    assert.match(certificate.documentHash, /^[0-9a-f]{64}$/);
+    assert.equal(certificate.signatureStatus, "unsigned");
+    assert.match(certificate.verificationId, /^[0-9a-f-]{36}$/);
     assert.deepEqual(certificate.entries.map(entry => entry.bullionNo), eightBatch.items.map(item => item.bullionNo));
     assert.equal((await request(`/api/v1/bullion/batches/${eightBatch.id}/finalize`, replacement, "POST", {})).status, 403);
     const archive = await request(`/api/v1/bullion/batches/${eightBatch.id}/archive-print`, le, "POST", {});

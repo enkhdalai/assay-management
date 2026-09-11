@@ -1,12 +1,51 @@
 import { sql } from "drizzle-orm";
 import type { AppDatabase } from "../../../../packages/db/src";
-import { sha256Base64Url, type AuthenticatedUser } from "../../../../packages/security/src";
+import { decryptField, isValidFieldEncryptionKey, sha256Base64Url, sha256Hex, type AuthenticatedUser } from "../../../../packages/security/src";
+import { canonicalizeJson, type CanonicalJson } from "../../../../packages/shared/src";
 import type { CertificateEntry } from "../../../../packages/shared/src/bullion-types";
 
-type Certificate = { issueYear: number; sequenceNo: number; issuedAt: string; entries: CertificateEntry[] };
+type Certificate = {
+  id: string; issueYear: number; sequenceNo: number; issuedAt: string; entries: CertificateEntry[] | string;
+  documentHash: string | null; verificationId: string; signatureStatus: string;
+};
+type CertificateSource = Certificate & {
+  batchId: string; publicId: string; metal: string; receivedAt: string; branchName: string | null;
+  province: string | null; district: string | null; dispatchReference: string | null; delta: string;
+  assayCenterId: string; assayCenterName: string; assayCenterCode: string | null;
+  customerName: string; customerType: string; registrationNumberEncrypted: string | null;
+};
 const rows = <T,>(result: T[] | { rows: T[] }) => Array.isArray(result) ? result : result.rows;
+const json = <T,>(value: T | string): T => typeof value === "string" ? JSON.parse(value) as T : value;
 
-export async function issueCertificate(db: AppDatabase, user: AuthenticatedUser, batchId: string) {
+async function revealRegistrationNumber(value: string | null, encryptionKey?: string): Promise<string | null> {
+  if (!value) return null;
+  if (!value.startsWith("v1.")) return value;
+  if (!isValidFieldEncryptionKey(encryptionKey)) return null;
+  try { return await decryptField(value, encryptionKey); } catch { return null; }
+}
+
+function buildManifest(source: CertificateSource, user: AuthenticatedUser, registrationNo: string | null): CanonicalJson {
+  const bullions = json<CertificateEntry[]>(source.entries).map((entry) => ({
+    analysisNo: String(entry.analysisNo), bullionNo: entry.bullionNo, bullionWeightGrams: String(entry.bullionWeightGrams),
+    origin: entry.origin, sampleWeightMilligrams: String(entry.sampleWeightMilligrams),
+    remainingMilligrams: String(entry.remainingMilligrams), lossMilligrams: String(entry.lossMilligrams),
+    returnedMilligrams: String(entry.returnedMilligrams), goldFinenessPermille: String(entry.goldResult),
+    silverFinenessPermille: String(entry.silverResult), chemistName: entry.chemistName,
+  }));
+  return {
+    schema: "assay-center.bullion-certificate/v1",
+    certificate: { id: source.id, verificationId: source.verificationId, issueYear: source.issueYear,
+      number: String(source.sequenceNo).padStart(4, "0"), issuedAt: source.issuedAt },
+    assayCenter: { id: source.assayCenterId, name: source.assayCenterName, code: source.assayCenterCode },
+    customer: { name: source.customerName, type: source.customerType, registrationNo },
+    intake: { batchId: source.batchId, registrationNo: source.publicId, metal: source.metal, receivedAt: source.receivedAt,
+      branchName: source.branchName, province: source.province, district: source.district, origin: source.dispatchReference, delta: source.delta },
+    bullions,
+    approvedBy: { userId: user.id, name: user.fullName, role: user.role },
+  };
+}
+
+export async function issueCertificate(db: AppDatabase, user: AuthenticatedUser, batchId: string, encryptionKey?: string) {
   const hash = await sha256Base64Url(JSON.stringify({ batchId, actor: user.id, nonce: crypto.randomUUID() }));
   // Serialize issuance with examination saves. The number and report snapshot commit together.
   const result = await db.batch([
@@ -48,12 +87,40 @@ export async function issueCertificate(db: AppDatabase, user: AuthenticatedUser,
       ), audit AS (
         INSERT INTO audit_logs (actor_user_id, actor_organization_id, action, entity_type, entity_id, new_values, reason, previous_hash, entry_hash)
         SELECT ${user.id}::uuid, ${user.organizationId}::uuid, 'bullion_certificate.created', 'bullion_certificates', id,
-          to_jsonb(issued), 'Complete request certificate',
+          to_jsonb(issued), 'Certificate prepared for digital signature',
           (SELECT entry_hash FROM audit_logs ORDER BY created_at DESC LIMIT 1), ${hash} FROM issued
-      ) SELECT issue_year AS "issueYear", sequence_no AS "sequenceNo", issued_at::text AS "issuedAt", entries FROM issued
-        UNION ALL SELECT issue_year AS "issueYear", sequence_no AS "sequenceNo", issued_at::text AS "issuedAt", entries FROM existing
+      ) SELECT id, issue_year AS "issueYear", sequence_no AS "sequenceNo", issued_at::text AS "issuedAt", entries,
+          document_hash AS "documentHash", verification_id AS "verificationId", signature_status AS "signatureStatus" FROM issued
+        UNION ALL SELECT id, issue_year AS "issueYear", sequence_no AS "sequenceNo", issued_at::text AS "issuedAt", entries,
+          document_hash AS "documentHash", verification_id AS "verificationId", signature_status AS "signatureStatus" FROM existing
     `),
   ]);
   const certificate = rows(result[1])[0];
-  return certificate ? { ...certificate, certificateNo: String(certificate.sequenceNo).padStart(4, "0") } : null;
+  if (!certificate) return null;
+  const [source] = rows(await db.execute<CertificateSource>(sql`
+    SELECT certificate.id, certificate.issue_year AS "issueYear", certificate.sequence_no AS "sequenceNo", certificate.issued_at::text AS "issuedAt",
+      certificate.entries, certificate.document_hash AS "documentHash", certificate.verification_id AS "verificationId", certificate.signature_status AS "signatureStatus",
+      batch.id AS "batchId", batch.public_id AS "publicId", batch.metal, batch.received_at::text AS "receivedAt", batch.branch_name AS "branchName",
+      batch.province, batch.district, batch.dispatch_reference AS "dispatchReference", batch.delta::text AS delta,
+      center.id AS "assayCenterId", center.name AS "assayCenterName", center.code AS "assayCenterCode",
+      customer.display_name AS "customerName", customer.type AS "customerType", customer.registration_number_encrypted AS "registrationNumberEncrypted"
+    FROM bullion_certificates certificate
+    JOIN bullion_intake_batches batch ON batch.id = certificate.batch_id
+    JOIN organizations center ON center.id = certificate.assay_center_id
+    JOIN customers customer ON customer.id = batch.customer_id
+    WHERE certificate.id = ${certificate.id}::uuid
+  `));
+  if (!source) return null;
+  let documentHash = source.documentHash;
+  if (!documentHash) {
+    const manifest = buildManifest(source, user, await revealRegistrationNumber(source.registrationNumberEncrypted, encryptionKey));
+    documentHash = await sha256Hex(canonicalizeJson(manifest));
+    await db.execute(sql`
+      UPDATE bullion_certificates SET manifest = ${JSON.stringify(manifest)}::jsonb, document_hash = ${documentHash}
+      WHERE id = ${source.id}::uuid AND document_hash IS NULL
+    `);
+  }
+  return { ...certificate, entries: json<CertificateEntry[]>(certificate.entries), documentHash,
+    signatureStatus: source.signatureStatus, verificationId: source.verificationId,
+    certificateNo: String(certificate.sequenceNo).padStart(4, "0") };
 }

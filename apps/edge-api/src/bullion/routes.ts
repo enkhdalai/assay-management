@@ -17,7 +17,6 @@ import { isCenterManager } from "../../../../packages/shared/src/workspace-acces
 import type { AnonymousSample } from "../../../../packages/shared/src/bullion-types";
 import { calculateBullion, BULLION_CALCULATION_VERSION } from "../../../../packages/shared/src/bullion-calculation";
 import { issueCertificate } from "./certificates";
-import { publishBomCertificateIfReady } from "../bom/publications";
 
 export const bullionRoutes = new Hono<{ Bindings: EdgeApiEnv }>();
 
@@ -141,13 +140,81 @@ bullionRoutes.post("/batches/:id/finalize", async (c) => {
   if (!c.env.DATABASE_URL) return c.json({ ok: false, message: "Гэрчилгээ батлахад өгөгдлийн сан шаардлагатай." }, 503);
 
   const db = createDatabase(c.env.DATABASE_URL);
-  const certificate = await issueCertificate(db, user, batchId);
+  const certificate = await issueCertificate(db, user, batchId, c.env.FIELD_ENCRYPTION_KEY);
   if (!certificate) return c.json({ ok: false, message: "Бүх гулдмайн шинжилгээг LE баталсны дараа эцсийн гэрчилгээ батална." }, 409);
-  const [item] = readRows(await db.execute<{ id: string }>(sql`
-    SELECT id FROM bullion_intake_items WHERE batch_id = ${batchId}::uuid ORDER BY sequence_no LIMIT 1
-  `));
-  if (item) await publishBomCertificateIfReady(db, item.id);
   return c.json({ ok: true, data: certificate });
+});
+
+/** The exact immutable bytes represented by this response are what a provider signs. */
+bullionRoutes.get("/batches/:id/signature-payload", async (c) => {
+  const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
+  if (!user) return c.json({ ok: false }, 401);
+  if (!isCenterManager(user.role)) return c.json({ ok: false }, 403);
+  const batchId = c.req.param("id");
+  if (!isUuid(batchId) || !c.env.DATABASE_URL) return c.json({ ok: false }, 400);
+  const [certificate] = readRows(await createDatabase(c.env.DATABASE_URL).execute(sql`
+    SELECT id, verification_id AS "verificationId", manifest, document_hash AS "documentHash", signature_status AS "signatureStatus"
+    FROM bullion_certificates WHERE batch_id = ${batchId}::uuid AND assay_center_id = ${user.organizationId}::uuid
+  `));
+  if (!certificate?.manifest || !certificate.documentHash) {
+    return c.json({ ok: false, message: "Дижитал гарын үсгийн гэрчилгээ бэлтгэгдээгүй байна." }, 409);
+  }
+  c.header("Cache-Control", "no-store");
+  return c.json({ ok: true, data: certificate });
+});
+
+/**
+ * Stores the response from the local eSign client as evidence only. The
+ * provider adapter must cryptographically verify it before a certificate can
+ * become signed or visible to external API clients.
+ */
+bullionRoutes.post("/batches/:id/signature-evidence", async (c) => {
+  const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
+  if (!user) return c.json({ ok: false }, 401);
+  if (!isCenterManager(user.role)) return c.json({ ok: false }, 403);
+  const batchId = c.req.param("id");
+  if (!isUuid(batchId) || !c.env.DATABASE_URL) return c.json({ ok: false }, 400);
+  const body = await c.req.json().catch(() => null) as { provider?: unknown; providerResponse?: unknown } | null;
+  if (body?.provider !== "tridum" || body.providerResponse == null) {
+    return c.json({ ok: false, message: "eSign-ийн хариу дутуу байна." }, 400);
+  }
+  let responseText: string;
+  try { responseText = typeof body.providerResponse === "string" ? body.providerResponse : JSON.stringify(body.providerResponse); }
+  catch { return c.json({ ok: false, message: "eSign-ийн хариу буруу байна." }, 400); }
+  if (!responseText || responseText.length > 131072) {
+    return c.json({ ok: false, message: "eSign-ийн хариу зөвшөөрөгдөх хэмжээнээс хэтэрсэн байна." }, 400);
+  }
+  let response: unknown = responseText;
+  try { response = JSON.parse(responseText); } catch { /* Provider may return a non-JSON signed envelope. */ }
+  const db = createDatabase(c.env.DATABASE_URL);
+  const receivedAt = new Date().toISOString();
+  const evidence = { receivedAt, providerResponse: response, verification: "pending_provider_validation" };
+  const auditId = crypto.randomUUID();
+  const entryHash = await sha256Base64Url(JSON.stringify({ auditId, batchId, certificateResponse: responseText, receivedAt }));
+  const result = await db.batch([
+    db.execute(sql`SELECT pg_advisory_xact_lock(741206825)`),
+    db.execute<{ id: string }>(sql`
+      WITH saved AS (
+        UPDATE bullion_certificates certificate
+        SET signature_status = 'signing', signature_provider = 'tridum', validation_evidence = ${JSON.stringify(evidence)}::jsonb
+        FROM bullion_intake_batches batch
+        WHERE certificate.batch_id = ${batchId}::uuid AND batch.id = certificate.batch_id
+          AND certificate.assay_center_id = ${user.organizationId}::uuid
+          AND certificate.signature_status IN ('unsigned', 'signing')
+          AND certificate.manifest IS NOT NULL AND certificate.document_hash IS NOT NULL
+        RETURNING certificate.id
+      ), audit AS (
+        INSERT INTO audit_logs (id, actor_user_id, actor_organization_id, action, entity_type, entity_id, new_values, reason, entry_hash)
+        SELECT ${auditId}::uuid, ${user.id}::uuid, ${user.organizationId}::uuid,
+          'bullion_certificate.signature_evidence_received', 'bullion_certificates', id,
+          jsonb_build_object('provider', 'tridum', 'receivedAt', ${receivedAt}),
+          'eSign response received; cryptographic verification pending', ${entryHash}
+        FROM saved
+      ) SELECT id FROM saved
+    `),
+  ]);
+  if (!readRows(result[1]).length) return c.json({ ok: false, message: "Гэрчилгээ гарын үсэг зурахад бэлэн биш байна." }, 409);
+  return c.json({ ok: true, data: { signatureStatus: "signing" } });
 });
 
 bullionRoutes.post("/batches/:id/archive-print", async (c) => {
@@ -313,6 +380,8 @@ async function listSamples(env: EdgeApiEnv, user: AuthenticatedUser): Promise<An
         WHERE batch_item.batch_id = b.id AND COALESCE(latest.status::text, 'draft') <> 'approved') AS "batchReadyForFinalization",
       (SELECT lpad(sequence_no::text, GREATEST(4, length(sequence_no::text)), '0') FROM bullion_certificates
         WHERE batch_id = b.id LIMIT 1) AS "certificateNo",
+      (SELECT signature_status FROM bullion_certificates
+        WHERE batch_id = b.id LIMIT 1) AS "certificateSignatureStatus",
       CASE WHEN e.id IS NULL THEN NULL ELSE json_build_object(
         'bullionItemId', i.id, 'examinationNo', i.examination_number::text, 'sampleWeightGrams', e.sample_weight_grams::float,
         'delta', e.delta::float, 'status', e.status, 'weightEntries', e.weight_entries,
@@ -345,7 +414,7 @@ async function listSamples(env: EdgeApiEnv, user: AuthenticatedUser): Promise<An
     delete anonymous.assignedChemistId; delete anonymous.assignedChemistName;
     delete anonymous.assignedAt; delete anonymous.completedAt;
     delete anonymous.approvedByName; delete anonymous.approvedAt;
-    delete anonymous.batchProgress; delete anonymous.batchReadyForFinalization; delete anonymous.certificateNo;
+    delete anonymous.batchProgress; delete anonymous.batchReadyForFinalization; delete anonymous.certificateNo; delete anonymous.certificateSignatureStatus;
     return anonymous;
   });
 }

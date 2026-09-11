@@ -94,6 +94,7 @@ export type AnonymousSample = {
   }>;
   batchReadyForFinalization?: boolean;
   certificateNo?: string | null;
+  certificateSignatureStatus?: "unsigned" | "signing" | "signed" | "failed" | "voided" | "superseded" | null;
   id: string;
   bullionNo: string;
   analysisNo: string;

@@ -35,43 +35,12 @@ export function IntegrationSettingsWorkspace() {
     </div>
     {error && <p role="alert" className="login-error">{error}</p>}
     {loading ? <WorkspaceLoadingSkeleton rows={3} /> : <>
-      <MonPassLaunchTest />
       <EsignLaunchTest />
       <CreateIntegrationClient organizations={organizations} onCreated={(client) => setClients((current) => [...current, client])} />
       {clients.length === 0 ? <p className="empty-state">BOM эсвэл арилжааны банкны API client бүртгэгдээгүй байна.</p> : <div className="integration-client-list">
       {clients.map((client) => <IntegrationClientCard key={client.id} client={client} onSaved={(updated) => setClients((current) => current.map((entry) => entry.id === updated.id ? updated : entry))} />)}
       </div>}
     </>}
-  </section>;
-}
-
-function MonPassLaunchTest() {
-  const [connection, setConnection] = useState<"idle" | "connecting" | "connected" | "unavailable">("idle");
-  function testLocalAgent() {
-    setConnection("connecting");
-    let opened = false;
-    let settled = false;
-    const socket = new WebSocket("wss://127.0.0.1:43871/socket");
-    const finish = (next: "connected" | "unavailable") => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timeout);
-      setConnection(next);
-    };
-    const timeout = window.setTimeout(() => { finish("unavailable"); socket.close(); }, 5000);
-    socket.onopen = () => { opened = true; finish("connected"); socket.close(1000, "Connection test complete"); };
-    socket.onerror = () => finish("unavailable");
-    socket.onclose = () => { if (!opened) finish("unavailable"); };
-  }
-  return <section className="monpass-launch-test" aria-labelledby="monpass-launch-title">
-    <div><p className="eyebrow">Тоон гарын үсгийн холболт</p><h3 id="monpass-launch-title">MonPass Client туршилт</h3>
-      <p>Windows дээр MonPass Client суусан эсэхийг шалгана. Зөвхөн туршилтын мэдээлэл илгээнэ.</p></div>
-    <div className="monpass-launch-actions">
-      <button type="button" className="secondary-button" disabled={connection === "connecting"} onClick={testLocalAgent}><PlugZap size={18} />{connection === "connecting" ? "Холбогдож байна" : "Local agent шалгах"}</button>
-      <code>WSS: wss://127.0.0.1:43871/socket</code>
-    </div>
-    {connection === "connected" && <p className="monpass-connection connected" role="status">MonPass local agent-т амжилттай холбогдлоо.</p>}
-    {connection === "unavailable" && <p className="monpass-connection unavailable" role="alert">Холболт амжилтгүй боллоо. MonPass Client ажиллаж, token холбогдсон эсэхийг шалгана уу.</p>}
   </section>;
 }
 

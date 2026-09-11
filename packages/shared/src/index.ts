@@ -40,3 +40,5 @@ export type {
   CreateBankInput,
 } from "./bank-types";
 export type { OrganizationConnections, OrganizationRecord } from "./organization-types";
+export { canonicalizeJson } from "./canonical-json";
+export type { CanonicalJson } from "./canonical-json";

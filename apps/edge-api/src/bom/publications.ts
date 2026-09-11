@@ -3,24 +3,23 @@ import { sql } from "drizzle-orm";
 import type { AppDatabase } from "../../../../packages/db/src";
 
 /**
- * Builds an insert that publishes only a fully LE-approved gold batch. Keeping
- * this in the approval transaction prevents a certificate from being visible
- * to an integration before its final approval is committed.
+ * Only a completed certificate with a verified digital signature may leave the
+ * operational system. The manifest is the immutable source the recipient hashes.
  */
 export function bomPublicationStatement(bullionItemId: string) {
   return sql`
     WITH certificate AS MATERIALIZED (
       SELECT certificate.id AS certificate_id, certificate.batch_id, certificate.assay_center_id,
-        certificate.issue_year, certificate.sequence_no, certificate.entries,
-        batch.public_id AS registration_no, batch.metal, batch.received_at,
-        center.name AS assay_center_name, center.code AS assay_center_code,
-        customer.display_name AS customer_name
+        certificate.issue_year, certificate.sequence_no, certificate.manifest, certificate.document_hash,
+        certificate.signed_at, certificate.signature_provider, certificate.provider_transaction_id,
+        certificate.signature_algorithm, certificate.signature_value, certificate.signer_certificate, certificate.certificate_chain
       FROM bullion_intake_items selected
       JOIN bullion_intake_batches batch ON batch.id = selected.batch_id
       JOIN bullion_certificates certificate ON certificate.batch_id = batch.id
       JOIN organizations center ON center.id = certificate.assay_center_id
       JOIN customers customer ON customer.id = batch.customer_id
       WHERE selected.id = ${bullionItemId}::uuid AND batch.metal = 'gold'
+        AND certificate.signature_status = 'signed' AND certificate.manifest IS NOT NULL AND certificate.document_hash IS NOT NULL
     ), ready AS MATERIALIZED (
       SELECT certificate.*,
         (SELECT max(examination.approved_at) FROM bullion_intake_items item
@@ -41,19 +40,10 @@ export function bomPublicationStatement(bullionItemId: string) {
           AND COALESCE(examination.status::text, 'draft') <> 'approved'
       )
     ), payload AS MATERIALIZED (
-      SELECT *, jsonb_build_object(
-        'certificateId', certificate_id,
-        'certificateNo', certificate_no,
-        'certificateYear', issue_year,
-        'sequenceNo', sequence_no,
-        'assayCenter', jsonb_build_object('id', assay_center_id, 'name', assay_center_name, 'code', assay_center_code),
-        'registrationNo', registration_no,
-        'customerName', customer_name,
-        'metal', metal,
-        'receivedAt', received_at,
-        'approvedAt', approved_at,
-        'entries', entries
-      ) AS document
+      SELECT *, jsonb_build_object('manifest', manifest, 'documentHash', document_hash,
+        'signature', jsonb_build_object('provider', signature_provider, 'transactionId', provider_transaction_id,
+          'algorithm', signature_algorithm, 'value', signature_value, 'signerCertificate', signer_certificate,
+          'certificateChain', certificate_chain, 'signedAt', signed_at)) AS document
       FROM (
         SELECT ready.*, lpad(sequence_no::text, GREATEST(4, length(sequence_no::text)), '0') AS certificate_no
         FROM ready WHERE approved_at IS NOT NULL
@@ -62,8 +52,7 @@ export function bomPublicationStatement(bullionItemId: string) {
     INSERT INTO integration.bom_certificate_publications (
       certificate_id, batch_id, assay_center_id, certificate_no, approved_at, payload, payload_hash
     )
-    SELECT certificate_id, batch_id, assay_center_id, certificate_no, approved_at, document,
-      encode(sha256(convert_to(document::text, 'UTF8')), 'hex')
+    SELECT certificate_id, batch_id, assay_center_id, certificate_no, approved_at, document, document_hash
     FROM payload
     ON CONFLICT (certificate_id) DO NOTHING
   `;

@@ -9,6 +9,7 @@ export {
   hmacSha256Base64Url,
   randomBase64Url,
   sha256Base64Url,
+  sha256Hex,
   timingSafeEqual,
 } from "./encoding";
 export {
