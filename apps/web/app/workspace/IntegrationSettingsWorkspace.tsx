@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { ExternalLink, RefreshCw, Save } from "lucide-react";
+import { ExternalLink, PlugZap, RefreshCw, Save } from "lucide-react";
 import { api } from "./api";
 import { WorkspaceLoadingSkeleton } from "./WorkspaceLoadingSkeleton";
 import type { OrganizationRecord } from "../../../../packages/shared/src/organization-types";
@@ -46,18 +46,38 @@ export function IntegrationSettingsWorkspace() {
 
 function MonPassLaunchTest() {
   const [attempted, setAttempted] = useState(false);
+  const [connection, setConnection] = useState<"idle" | "connecting" | "connected" | "unavailable">("idle");
   // This is deliberately non-production data. The real signature flow uses a
   // short-lived server request ID rather than exposing certificate data in a URI.
   const payload = typeof window === "undefined" ? "" : window.btoa("assay-center-monpass-launch-test-v1");
   const uri = `monpass://sign?data=${payload}`;
+  function testLocalAgent() {
+    setConnection("connecting");
+    let opened = false;
+    let settled = false;
+    const socket = new WebSocket("wss://127.0.0.1:43871/socket");
+    const finish = (next: "connected" | "unavailable") => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      setConnection(next);
+    };
+    const timeout = window.setTimeout(() => { finish("unavailable"); socket.close(); }, 5000);
+    socket.onopen = () => { opened = true; finish("connected"); socket.close(1000, "Connection test complete"); };
+    socket.onerror = () => finish("unavailable");
+    socket.onclose = () => { if (!opened) finish("unavailable"); };
+  }
   return <section className="monpass-launch-test" aria-labelledby="monpass-launch-title">
     <div><p className="eyebrow">Тоон гарын үсгийн холболт</p><h3 id="monpass-launch-title">MonPass Client туршилт</h3>
       <p>Windows дээр MonPass Client суусан эсэхийг шалгана. Зөвхөн туршилтын мэдээлэл илгээнэ.</p></div>
     <div className="monpass-launch-actions">
       <a className="primary-button" href={uri} onClick={() => setAttempted(true)}><ExternalLink size={18} />MonPass Client нээх</a>
-      <code>{uri}</code>
+      <button type="button" className="secondary-button" disabled={connection === "connecting"} onClick={testLocalAgent}><PlugZap size={18} />{connection === "connecting" ? "Холбогдож байна" : "Local agent шалгах"}</button>
+      <code>WSS: wss://127.0.0.1:43871/socket</code>
     </div>
     {attempted && <p className="field-hint">Windows-ийн зөвшөөрлийн цонх гарч, MonPass Client нээгдсэн бол холболтын протокол бүртгэгдсэн байна.</p>}
+    {connection === "connected" && <p className="monpass-connection connected" role="status">MonPass local agent-т амжилттай холбогдлоо.</p>}
+    {connection === "unavailable" && <p className="monpass-connection unavailable" role="alert">Холболт амжилтгүй боллоо. MonPass Client ажиллаж, token холбогдсон эсэхийг шалгана уу.</p>}
   </section>;
 }
 

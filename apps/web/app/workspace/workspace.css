@@ -157,6 +157,10 @@
 .monpass-launch-test p { color: var(--muted); margin: 0; }
 .monpass-launch-actions { align-items: stretch; display: grid; gap: 10px; justify-items: start; }
 .monpass-launch-actions code { color: var(--muted); font-size: 12px; max-width: 100%; overflow-wrap: anywhere; }
+.monpass-launch-actions .primary-button, .monpass-launch-actions .secondary-button { align-items: center; display: inline-flex; gap: 8px; }
+.monpass-connection { grid-column: 1 / -1; margin: 0; padding: 9px 11px; font-size: 14px; }
+.monpass-connection.connected { background: #e9f8ef; color: #17633c; }
+.monpass-connection.unavailable { background: #fff5df; color: #8a5a12; }
 
 @media (max-width: 760px) {
   .monpass-launch-test { grid-template-columns: 1fr; }
