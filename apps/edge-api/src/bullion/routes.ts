@@ -380,8 +380,6 @@ async function listSamples(env: EdgeApiEnv, user: AuthenticatedUser): Promise<An
         WHERE batch_item.batch_id = b.id AND COALESCE(latest.status::text, 'draft') <> 'approved') AS "batchReadyForFinalization",
       (SELECT lpad(sequence_no::text, GREATEST(4, length(sequence_no::text)), '0') FROM bullion_certificates
         WHERE batch_id = b.id LIMIT 1) AS "certificateNo",
-      (SELECT signature_status FROM bullion_certificates
-        WHERE batch_id = b.id LIMIT 1) AS "certificateSignatureStatus",
       CASE WHEN e.id IS NULL THEN NULL ELSE json_build_object(
         'bullionItemId', i.id, 'examinationNo', i.examination_number::text, 'sampleWeightGrams', e.sample_weight_grams::float,
         'delta', e.delta::float, 'status', e.status, 'weightEntries', e.weight_entries,
@@ -414,7 +412,7 @@ async function listSamples(env: EdgeApiEnv, user: AuthenticatedUser): Promise<An
     delete anonymous.assignedChemistId; delete anonymous.assignedChemistName;
     delete anonymous.assignedAt; delete anonymous.completedAt;
     delete anonymous.approvedByName; delete anonymous.approvedAt;
-    delete anonymous.batchProgress; delete anonymous.batchReadyForFinalization; delete anonymous.certificateNo; delete anonymous.certificateSignatureStatus;
+    delete anonymous.batchProgress; delete anonymous.batchReadyForFinalization; delete anonymous.certificateNo;
     return anonymous;
   });
 }
