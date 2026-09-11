@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { RefreshCw, Save } from "lucide-react";
+import { ExternalLink, RefreshCw, Save } from "lucide-react";
 import { api } from "./api";
 import { WorkspaceLoadingSkeleton } from "./WorkspaceLoadingSkeleton";
 import type { OrganizationRecord } from "../../../../packages/shared/src/organization-types";
@@ -35,11 +35,29 @@ export function IntegrationSettingsWorkspace() {
     </div>
     {error && <p role="alert" className="login-error">{error}</p>}
     {loading ? <WorkspaceLoadingSkeleton rows={3} /> : <>
+      <MonPassLaunchTest />
       <CreateIntegrationClient organizations={organizations} onCreated={(client) => setClients((current) => [...current, client])} />
       {clients.length === 0 ? <p className="empty-state">BOM эсвэл арилжааны банкны API client бүртгэгдээгүй байна.</p> : <div className="integration-client-list">
       {clients.map((client) => <IntegrationClientCard key={client.id} client={client} onSaved={(updated) => setClients((current) => current.map((entry) => entry.id === updated.id ? updated : entry))} />)}
       </div>}
     </>}
+  </section>;
+}
+
+function MonPassLaunchTest() {
+  const [attempted, setAttempted] = useState(false);
+  // This is deliberately non-production data. The real signature flow uses a
+  // short-lived server request ID rather than exposing certificate data in a URI.
+  const payload = typeof window === "undefined" ? "" : window.btoa("assay-center-monpass-launch-test-v1");
+  const uri = `monpass://sign?data=${payload}`;
+  return <section className="monpass-launch-test" aria-labelledby="monpass-launch-title">
+    <div><p className="eyebrow">Тоон гарын үсгийн холболт</p><h3 id="monpass-launch-title">MonPass Client туршилт</h3>
+      <p>Windows дээр MonPass Client суусан эсэхийг шалгана. Зөвхөн туршилтын мэдээлэл илгээнэ.</p></div>
+    <div className="monpass-launch-actions">
+      <a className="primary-button" href={uri} onClick={() => setAttempted(true)}><ExternalLink size={18} />MonPass Client нээх</a>
+      <code>{uri}</code>
+    </div>
+    {attempted && <p className="field-hint">Windows-ийн зөвшөөрлийн цонх гарч, MonPass Client нээгдсэн бол холболтын протокол бүртгэгдсэн байна.</p>}
   </section>;
 }
 

@@ -142,6 +142,25 @@
 .status-warning { color: #9b5b08; background: #fff5df; }
 .status-neutral { color: #46556a; background: #eef2f6; }
 .settings-success { margin: 0; color: #17633c; }
+
+.monpass-launch-test {
+  align-items: start;
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.8fr);
+  margin-bottom: 18px;
+  padding: 20px;
+}
+
+.monpass-launch-test h3 { margin: 4px 0 8px; }
+.monpass-launch-test p { color: var(--muted); margin: 0; }
+.monpass-launch-actions { align-items: stretch; display: grid; gap: 10px; justify-items: start; }
+.monpass-launch-actions code { color: var(--muted); font-size: 12px; max-width: 100%; overflow-wrap: anywhere; }
+
+@media (max-width: 760px) {
+  .monpass-launch-test { grid-template-columns: 1fr; }
+}
 .batch-timeline { display: grid; gap: 5px; min-width: 160px; }
 .batch-timeline > span { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; white-space: nowrap; }
 .timeline-complete { color: #17633c; }
