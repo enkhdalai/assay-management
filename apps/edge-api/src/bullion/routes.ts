@@ -275,7 +275,7 @@ async function listSamples(env: EdgeApiEnv, user: AuthenticatedUser): Promise<An
         return progress;
       }, new Map());
       return { id: item.id, analysisNo: item.analysisNo!, metal: batch.metal,
-        ...(isCenterManager(user.role) ? { bullionNo: String(item.sequenceNo).padStart(4, "0"), batchId: batch.id, customerName: batch.customerName, registrationNo: batch.publicId,
+        ...(isCenterManager(user.role) ? { bullionNo: item.bullionNo, batchId: batch.id, customerName: batch.customerName, registrationNo: batch.publicId,
           assignedChemistId: item.assignedChemistId ?? null, assignedChemistName: item.assignedChemistName ?? null,
           assignedAt: item.assignedAt ?? null, completedAt: revision?.submittedAt ?? null,
           batchProgress: [...batchProgress.values()], batchReadyForFinalization: false, certificateNo: null } : {}),
@@ -290,7 +290,7 @@ async function listSamples(env: EdgeApiEnv, user: AuthenticatedUser): Promise<An
       (SELECT full_name FROM users WHERE id = i.assigned_chemist_id) AS "assignedChemistName",
       approver.full_name AS "approvedByName",
       transfer."substitutedByName", transfer."substitutedAt",
-      lpad(i.sequence_no::text, 4, '0') AS "bullionNo", i.examination_number::text AS "analysisNo", b.metal,
+      i.bullion_no AS "bullionNo", i.examination_number::text AS "analysisNo", b.metal,
       b.received_at AS "receivedAt", i.sample_weight_milligrams::float AS "sampleWeightMilligrams",
       b.delta::float AS delta, COALESCE(e.revision_no, 0) AS "revisionNo", COALESCE(e.status::text, 'pending') AS status,
       COALESCE((SELECT json_agg(json_build_object(

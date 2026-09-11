@@ -151,8 +151,11 @@ test("PostgreSQL routes enforce tenant scope and persist staff and intake audits
     assert.equal((await request("/api/v1/bullion/examinations", chemist, "POST", exam)).status, 201);
     const savedExamination = (await (await request("/api/v1/bullion/samples", chemist)).json()).data[0].examination;
     assert.deepEqual(savedExamination.weightEntries, exam.weightEntries);
+    await database.query("UPDATE bullion_intake_items SET bullion_no = '0015' WHERE id = $1", [item.id]);
     const managerDraft = (await (await request("/api/v1/bullion/samples", le)).json()).data.find(sample => sample.id === item.id);
     assert.equal(managerDraft.status, "draft");
+    assert.equal(managerDraft.bullionNo, "0015");
+    await database.query("UPDATE bullion_intake_items SET bullion_no = '0001' WHERE id = $1", [item.id]);
     assert(Number.isFinite(Date.parse(managerDraft.assignedAt)));
     assert.equal(managerDraft.completedAt, null);
     assert.deepEqual(managerDraft.examination.weightEntries, exam.weightEntries);
