@@ -167,40 +167,28 @@ bullionRoutes.post("/samples/:id/return", async (c) => {
   }
 
   const db = createDatabase(c.env.DATABASE_URL);
-  const auditId = crypto.randomUUID();
-  const entryHash = await sha256Base64Url(JSON.stringify({ auditId, itemId: id, actor: user.id, action: "bullion_examination.returned", note }));
-  const result = await db.batch([
-    db.execute(sql`SELECT pg_advisory_xact_lock(741206825)`),
-    db.execute<{ id: string }>(sql`
-      WITH target AS MATERIALIZED (
-        SELECT e.id, e.status, e.submitted_at AS "submittedAt"
-        FROM bullion_intake_items i
-        JOIN bullion_intake_batches b ON b.id = i.batch_id
-        JOIN LATERAL (
-          SELECT * FROM bullion_examination_revisions
-          WHERE bullion_item_id = i.id ORDER BY revision_no DESC LIMIT 1
-        ) e ON true
-        WHERE i.id = ${id}::uuid AND e.status = 'submitted'
-          AND (${user.role} = 'system_admin' OR b.assay_center_id = ${user.organizationId}::uuid)
-        FOR UPDATE OF e
-      ), returned AS (
-        UPDATE bullion_examination_revisions
-        SET status = 'draft', submitted_at = NULL, returned_by_user_id = ${user.id}::uuid,
-          returned_at = now(), return_note = ${note}
-        WHERE id IN (SELECT id FROM target)
-        RETURNING id
-      ), audit AS (
-        INSERT INTO audit_logs (id, actor_user_id, actor_organization_id, action, entity_type, entity_id, old_values, new_values, reason, entry_hash)
-        SELECT ${auditId}::uuid, ${user.id}::uuid, ${user.organizationId}::uuid,
-          'bullion_examination.returned', 'bullion_examination_revisions', returned.id,
-          jsonb_build_object('status', target.status, 'submittedAt', target."submittedAt"),
-          jsonb_build_object('status', 'draft', 'submittedAt', NULL, 'returnNote', ${note}),
-          ${note}, ${entryHash}
-        FROM returned JOIN target ON target.id = returned.id
-      ) SELECT id FROM returned
-    `),
-  ]);
-  if (!readRows(result[1]).length) return c.json({ ok: false, message: "Зөвхөн эрхлэгчийн хяналтад байгаа шинжилгээг буцаах боломжтой." }, 409);
+  const [returned] = readRows(await db.execute<{ id: string }>(sql`
+    UPDATE bullion_examination_revisions revision
+    SET status = 'draft', submitted_at = NULL, returned_by_user_id = ${user.id}::uuid,
+      returned_at = now(), return_note = ${note}
+    FROM bullion_intake_items item
+    JOIN bullion_intake_batches batch ON batch.id = item.batch_id
+    WHERE revision.id = (
+      SELECT latest.id
+      FROM bullion_examination_revisions latest
+      WHERE latest.bullion_item_id = item.id
+      ORDER BY latest.revision_no DESC
+      LIMIT 1
+    )
+      AND item.id = ${id}::uuid
+      AND revision.status = 'submitted'
+      AND (${user.role} = 'system_admin' OR batch.assay_center_id = ${user.organizationId}::uuid)
+    RETURNING revision.id
+  `));
+  if (!returned) return c.json({ ok: false, message: "Зөвхөн эрхлэгчийн хяналтад байгаа шинжилгээг буцаах боломжтой." }, 409);
+  await appendAuditLog(db, user, "bullion_examination.returned", "bullion_examination_revisions", returned.id, {
+    bullionItemId: id, status: "draft", returnNote: note,
+  });
   return c.json({ ok: true });
 });
 

@@ -96,6 +96,7 @@
 .account-dialog label { display: grid; gap: 6px; color: #354456; font-size: 14px; font-weight: 650; }
 .account-dialog input { min-height: 42px; border: 1px solid #d5ddd8; border-radius: 8px; padding: 8px 12px; color: #283238; font: inherit; font-weight: 400; }
 .account-dialog textarea { min-height: 110px; resize: vertical; border: 1px solid #d5ddd8; border-radius: 8px; padding: 10px 12px; color: #283238; font: inherit; font-weight: 400; }
+.return-for-correction-dialog { width: min(680px, 100%); }
 .account-dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; }
 .account-dialog-error { margin: 0; color: #b23737; font-size: 14px; line-height: 1.4; }
 .account-dialog-success { margin: 0; color: #187446; line-height: 1.5; }
