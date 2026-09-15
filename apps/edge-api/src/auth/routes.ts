@@ -70,11 +70,45 @@ authRoutes.get("/me", async (c) => {
   const store = await getAuthStore(c.env);
   if (!store) return c.json({ ok: false }, 401);
 
-  const user = await store.getUserBySessionToken(getCookie(c, AUTH_SESSION_COOKIE));
+  const token = getCookie(c, AUTH_SESSION_COOKIE);
+  const user = await store.getUserBySessionToken(token);
 
   if (!user) return c.json({ ok: false }, 401);
 
-  return c.json({ ok: true, user });
+  const expiresAt = await store.getSessionExpiresAt(token);
+  if (!expiresAt) return c.json({ ok: false }, 401);
+
+  return c.json({ ok: true, user, expiresAt: expiresAt.toISOString() });
+});
+
+authRoutes.post("/session/extend", async (c) => {
+  const store = await getAuthStore(c.env);
+  if (!store) return c.json({ ok: false }, 401);
+
+  const token = getCookie(c, AUTH_SESSION_COOKIE);
+  const expiresAt = await store.extendSession(token);
+  if (!expiresAt || !token) return c.json({ ok: false, message: "Хэрэглэгчийн сесс дууссан байна." }, 401);
+
+  setAuthCookie(c, token, expiresAt);
+  return c.json({ ok: true, expiresAt: expiresAt.toISOString() });
+});
+
+authRoutes.post("/password", async (c) => {
+  const store = await getAuthStore(c.env);
+  if (!store) return c.json({ ok: false }, 401);
+
+  const body = await c.req.json().catch(() => null);
+  const currentPassword = typeof body?.currentPassword === "string" ? body.currentPassword : "";
+  const newPassword = typeof body?.newPassword === "string" ? body.newPassword : "";
+  if (!currentPassword || !newPassword) return c.json({ ok: false, message: "Одоогийн болон шинэ нууц үгээ оруулна уу." }, 400);
+
+  try {
+    const updated = await store.changePassword(getCookie(c, AUTH_SESSION_COOKIE), currentPassword, newPassword);
+    if (!updated) return c.json({ ok: false, message: "Одоогийн нууц үг буруу эсвэл сесс дууссан байна." }, 401);
+    return c.json({ ok: true });
+  } catch {
+    return c.json({ ok: false, message: "Шинэ нууц үг нь 12-оос доошгүй тэмдэгттэй, том жижиг үсэг болон тоо агуулсан байна." }, 400);
+  }
 });
 
 authRoutes.post("/invitations", async (c) => {

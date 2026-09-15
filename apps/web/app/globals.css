@@ -7,8 +7,8 @@
   --line: #dce4ef;
   --panel: #ffffff;
   --panel-soft: #f8fafc;
-  --blue: #2563eb;
-  --blue-soft: #dce8ff;
+  --blue: #0c79d8;
+  --blue-soft: #e5f3ff;
   --green: #047857;
   --green-soft: #dff7ea;
   --amber: #b45309;
@@ -335,10 +335,7 @@ h2 {
   transform: translateY(-1px);
 }
 
-.summary-panel:focus-visible {
-  outline: 2px solid #6b7280;
-  outline-offset: 2px;
-}
+.summary-panel:focus-visible { outline: none; }
 
 .summary-panel .panel-header.compact {
   margin-bottom: 10px;
@@ -536,10 +533,7 @@ h2 {
   box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.09);
 }
 
-.status-action:focus-visible {
-  outline: 2px solid #6b7280;
-  outline-offset: 2px;
-}
+.status-action:focus-visible { outline: none; }
 
 .bank-list {
   display: grid;
@@ -631,7 +625,7 @@ h2 {
 .customer-record-row .customer-name { font-weight: 400; }
 
 .customer-record-row:hover,
-.customer-record-row:focus-visible { background: #f4f8ff; outline: 2px solid #7ea6df; outline-offset: -2px; }
+.customer-record-row:focus-visible { background: #f4f8ff; outline: none; }
 
 .customer-detail-modal { max-width: 1040px; }
 
@@ -1335,15 +1329,15 @@ h2 {
   box-shadow: none;
 }
 
-/* Keep keyboard focus visible without the browser's blue focus ring. */
+/* Suppress browser focus outlines throughout the application. */
 :is(button, input, select, textarea, a, [tabindex], [contenteditable]):focus {
   outline: none;
   box-shadow: none;
 }
 
 :is(button, input, select, textarea, a, [tabindex], [contenteditable]):focus-visible {
-  outline: 2px solid #6b7280;
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: none;
 }
 
 .bullion-panel,

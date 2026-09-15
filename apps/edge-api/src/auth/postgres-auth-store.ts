@@ -642,6 +642,77 @@ export class PostgresAuthStore implements AuthStore {
     };
   }
 
+  async getSessionExpiresAt(token: string | undefined): Promise<Date | null> {
+    if (!token) return null;
+
+    const tokenHash = await hashSessionToken(token);
+    const [session] = await this.db
+      .select({ expiresAt: userSessions.expiresAt })
+      .from(userSessions)
+      .where(
+        and(
+          eq(userSessions.sessionTokenHash, tokenHash),
+          eq(userSessions.status, "active"),
+          isNull(userSessions.revokedAt),
+          gt(userSessions.expiresAt, new Date()),
+        ),
+      )
+      .limit(1);
+
+    return session?.expiresAt ?? null;
+  }
+
+  async extendSession(token: string | undefined): Promise<Date | null> {
+    if (!token) return null;
+
+    const tokenHash = await hashSessionToken(token);
+    const expiresAt = sessionExpiresAt();
+    const [session] = await this.db
+      .update(userSessions)
+      .set({ expiresAt })
+      .where(
+        and(
+          eq(userSessions.sessionTokenHash, tokenHash),
+          eq(userSessions.status, "active"),
+          isNull(userSessions.revokedAt),
+          gt(userSessions.expiresAt, new Date()),
+        ),
+      )
+      .returning({ expiresAt: userSessions.expiresAt });
+
+    return session?.expiresAt ?? null;
+  }
+
+  async changePassword(token: string | undefined, currentPassword: string, newPassword: string): Promise<boolean> {
+    if (!token) return false;
+
+    const tokenHash = await hashSessionToken(token);
+    const [session] = await this.db
+      .select({ userId: userSessions.userId, passwordHash: users.passwordHash })
+      .from(userSessions)
+      .innerJoin(users, eq(userSessions.userId, users.id))
+      .where(
+        and(
+          eq(userSessions.sessionTokenHash, tokenHash),
+          eq(userSessions.status, "active"),
+          eq(users.status, "active"),
+          isNull(userSessions.revokedAt),
+          gt(userSessions.expiresAt, new Date()),
+        ),
+      )
+      .limit(1);
+
+    if (!session?.passwordHash || !(await verifyPassword(currentPassword, session.passwordHash))) return false;
+
+    assertAcceptablePassword(newPassword);
+    await this.db
+      .update(users)
+      .set({ passwordHash: await hashPassword(newPassword), passwordUpdatedAt: new Date(), updatedAt: new Date() })
+      .where(eq(users.id, session.userId));
+
+    return true;
+  }
+
   async revokeSession(token: string | undefined): Promise<void> {
     if (!token) return;
 

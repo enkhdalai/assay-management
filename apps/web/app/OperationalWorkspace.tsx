@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { Building2, ChartNoAxesCombined, FlaskConical, KeyRound, LayoutDashboard, LogOut, Settings, UsersRound, UserRoundCog, Inbox } from "lucide-react";
 import type { AuthenticatedUser } from "../../../packages/security/src/session";
 import type { CustomerRecord, ManagedUser } from "../../../packages/shared/src";
 import { canManageStaff, isCenterManager, workspaceRoleLabels } from "../../../packages/shared/src/workspace-access";
@@ -17,42 +18,143 @@ import "./workspace/workspace.css";
 
 type View = "dashboard" | "intake" | "samples" | "customers" | "staff" | "reports" | "organizations" | "settings";
 const labels: Record<View, string> = { dashboard: "Нүүр", intake: "Гулдмай хүлээн авах", samples: "Дээж", customers: "Харилцагчид", staff: "Ажилтнууд", reports: "Тайлан", organizations: "Байгууллагууд", settings: "Тохиргоо" };
+const viewIcons: Record<View, typeof LayoutDashboard> = {
+  dashboard: LayoutDashboard,
+  intake: Inbox,
+  samples: FlaskConical,
+  customers: UsersRound,
+  staff: UserRoundCog,
+  reports: ChartNoAxesCombined,
+  organizations: Building2,
+  settings: Settings,
+};
+
+function formatSessionCountdown(expiresAt: number, now: number): string {
+  const totalSeconds = Math.max(0, Math.ceil((expiresAt - now) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const minuteSecond = `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  return hours > 0 ? `${hours}:${minuteSecond}` : minuteSecond;
+}
 
 export function OperationalWorkspace() {
   const [user, setUser] = useState<AuthenticatedUser | null>(null);
   const [error, setError] = useState("");
   const [view, setView] = useState<View>("dashboard");
   const [loggingOut, setLoggingOut] = useState(false);
+  const [sessionExpiresAt, setSessionExpiresAt] = useState<number | null>(null);
+  const [sessionNow, setSessionNow] = useState(() => Date.now());
+  const [sessionPromptOpen, setSessionPromptOpen] = useState(false);
+  const [sessionSecondsRemaining, setSessionSecondsRemaining] = useState(10);
+  const [extendingSession, setExtendingSession] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
+  const extensionRequested = useRef(false);
+  const accountMenu = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let active = true;
-    api<{ user: AuthenticatedUser }>("/api/auth/me").then(({ user }) => {
+    api<{ user: AuthenticatedUser; expiresAt: string }>("/api/auth/me").then(({ user, expiresAt }) => {
       if (!active) return;
       setUser(user);
+      const expiration = Date.parse(expiresAt);
+      setSessionExpiresAt(Number.isFinite(expiration) ? expiration : null);
       const requested = new URLSearchParams(window.location.search).get("view");
       setView(user.role === "chemist" ? "samples" : isCenterManager(user.role) && requested === "staff" ? "staff" : isCenterManager(user.role) ? "dashboard" : "intake");
     }).catch((error) => { if (active) setError(error.message); });
     return () => { active = false; };
   }, []);
-  async function logout() {
+  const logout = useCallback(async () => {
     setLoggingOut(true);
     try { await api("/api/auth/logout", { method: "POST" }); window.location.assign("/login"); }
     catch (error) { setError(error instanceof Error ? error.message : "Гарах үед алдаа гарлаа."); setLoggingOut(false); }
-  }
+  }, []);
+  const extendSession = useCallback(async () => {
+    extensionRequested.current = true;
+    setExtendingSession(true);
+    try {
+      const { expiresAt } = await api<{ expiresAt: string }>("/api/auth/session/extend", { method: "POST" });
+      const expiration = Date.parse(expiresAt);
+      if (!Number.isFinite(expiration)) throw new Error("Сессийн хугацааг шинэчлэх боломжгүй байна.");
+      setSessionExpiresAt(expiration);
+      setSessionPromptOpen(false);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Сессийн хугацааг шинэчлэх боломжгүй байна.");
+      await logout();
+    } finally {
+      setExtendingSession(false);
+    }
+  }, [logout]);
+  useEffect(() => {
+    if (!user || !sessionExpiresAt) return;
+
+    let promptTimer: number | undefined;
+    let logoutTimer: number | undefined;
+    let countdownTimer: number | undefined;
+    const endSession = () => { void logout(); };
+    const showExtensionPrompt = () => {
+      extensionRequested.current = false;
+      setSessionSecondsRemaining(10);
+      setSessionPromptOpen(true);
+      const deadline = Date.now() + 10_000;
+      countdownTimer = window.setInterval(() => setSessionSecondsRemaining(Math.max(0, Math.ceil((deadline - Date.now()) / 1000))), 250);
+      logoutTimer = window.setTimeout(() => {
+        if (!extensionRequested.current) endSession();
+      }, 10_000);
+    };
+
+    const remaining = sessionExpiresAt - Date.now();
+    if (remaining <= 0) endSession();
+    else promptTimer = window.setTimeout(showExtensionPrompt, Math.max(0, remaining - 60_000));
+
+    return () => {
+      if (promptTimer) window.clearTimeout(promptTimer);
+      if (logoutTimer) window.clearTimeout(logoutTimer);
+      if (countdownTimer) window.clearInterval(countdownTimer);
+    };
+  }, [logout, sessionExpiresAt, user]);
+  useEffect(() => {
+    if (!sessionExpiresAt) return;
+
+    setSessionNow(Date.now());
+    const timer = window.setInterval(() => setSessionNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [sessionExpiresAt]);
+  useEffect(() => {
+    if (!accountMenuOpen) return;
+
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (!accountMenu.current?.contains(event.target as Node)) setAccountMenuOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setAccountMenuOpen(false);
+    };
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [accountMenuOpen]);
   const manager = user && isCenterManager(user.role);
   const allowed = user && (manager || user.role === "chemist" || user.role === "intake_officer");
   const views: View[] = manager ? ["dashboard", "intake", "samples", "customers", "staff", "reports"] : user?.role === "chemist" ? ["samples"] : ["intake"];
   if (user?.role === "system_admin") views.push("organizations", "settings");
   return <div className={`workspace-shell ${manager ? "with-navigation" : ""}`}>
-    {manager && <aside className="workspace-nav"><a className="workspace-brand" href="/"><img src="/favicon.svg" alt="" width="40" height="40" /><span>Сорьцын төв</span></a>
-      <nav aria-label="Үндсэн цэс">{views.map((item) => <button type="button" key={item} aria-current={view === item ? "page" : undefined} onClick={() => { setView(item); setError(""); }}>{labels[item]}</button>)}</nav></aside>}
+    {manager && <aside className="workspace-nav"><a className="workspace-brand" href="/"><img src="/favicon.svg" alt="" width="42" height="42" /><span>Сорьцын төв</span></a>
+      <nav aria-label="Үндсэн цэс">{views.map((item) => { const Icon = viewIcons[item]; return <button type="button" key={item} aria-current={view === item ? "page" : undefined} onClick={() => { setView(item); setError(""); }}><Icon aria-hidden="true" size={18} strokeWidth={1.9} /><span>{labels[item]}</span></button>; })}</nav>
+      <p className="workspace-nav-footer">Сорьцын төвийн удирдлага</p>
+    </aside>}
     <main className="workspace-main">
       <header className="workspace-header"><div>{!manager && <img src="/favicon.svg" alt="" width="36" height="36" />}<h1>{user && allowed ? user.role === "chemist" ? "Алт, мөнгөн гулдмайн шинжилгээ" : labels[view] : "Сорьцын төвийн удирдлага"}</h1></div>
-        {user && <div className="workspace-account"><span>{user.fullName}<small>{workspaceRoleLabels[user.role] ?? user.role}</small></span><button className="secondary-button" type="button" onClick={logout} disabled={loggingOut}>Гарах</button></div>}
+        {user && <div className="workspace-account">{sessionExpiresAt && <span className="session-timer" aria-label={`Сесс дуусах хүртэл ${formatSessionCountdown(sessionExpiresAt, sessionNow)}`}>Холболт салгах: <strong>{formatSessionCountdown(sessionExpiresAt, sessionNow)}</strong></span>}<div className="workspace-account-menu" ref={accountMenu}><button className="workspace-avatar" type="button" onClick={() => setAccountMenuOpen((open) => !open)} aria-label="Хэрэглэгчийн цэс" aria-expanded={accountMenuOpen} aria-haspopup="menu">{user.fullName.trim().charAt(0).toLocaleUpperCase()}</button>{accountMenuOpen && <div className="workspace-account-dropdown" role="menu"><div className="workspace-account-summary"><strong>{user.fullName}</strong><span>{workspaceRoleLabels[user.role] ?? user.role}</span></div><button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); setChangePasswordOpen(true); }}><KeyRound aria-hidden="true" size={17} />Нууц үг солих</button><button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); setAccountSettingsOpen(true); }}><Settings aria-hidden="true" size={17} />Бүртгэлийн тохиргоо</button><button type="button" role="menuitem" className="account-menu-logout" onClick={logout} disabled={loggingOut}><LogOut aria-hidden="true" size={17} />Гарах</button></div>}</div></div>}
       </header>
-      {error && <p role="alert" className="login-error">{error}</p>}
-      {!user && !error && <WorkspaceLoadingSkeleton variant="page" />}
-      {user && !allowed && <p>Таны эрхэд зориулсан портал одоогоор нээгдээгүй байна.</p>}
-      {user && allowed && <>
+      <div className="workspace-content-frame">
+        {error && <p role="alert" className="login-error">{error}</p>}
+        {!user && !error && <WorkspaceLoadingSkeleton variant="page" />}
+        {user && !allowed && <p>Таны эрхэд зориулсан портал одоогоор нээгдээгүй байна.</p>}
+        {user && allowed && <>
         {manager && view === "dashboard" && <DashboardWorkspace />}
         {view === "intake" && <IntakeWorkspace manager={!!manager} />}
         {view === "samples" && <SampleWorkspace manager={!!manager} centerType={user.organizationType} />}
@@ -61,9 +163,55 @@ export function OperationalWorkspace() {
         {user.role === "system_admin" && view === "organizations" && <OrganizationsWorkspace />}
         {user.role === "system_admin" && view === "settings" && <IntegrationSettingsWorkspace />}
         {manager && view === "reports" && <ReportsWorkspace organizationName={user.role === "system_admin" ? "Бүх төв" : user.organizationName} />}
-      </>}
+        </>}
+      </div>
     </main>
+    {sessionPromptOpen && <div className="session-extension-backdrop" role="presentation">
+      <section className="session-extension-dialog" role="dialog" aria-modal="true" aria-labelledby="session-extension-title">
+        <h2 id="session-extension-title">Сессийн хугацаа дуусах гэж байна</h2>
+        <p>Таны сесс нэг минутын дараа дуусна. Үргэлжлүүлэх үү?</p>
+        <p className="session-extension-countdown">Хариу өгөх хугацаа: {sessionSecondsRemaining} секунд</p>
+        <div className="session-extension-actions">
+          <button type="button" className="secondary-button" onClick={logout} disabled={extendingSession}>Гарах</button>
+          <button type="button" className="primary-button" onClick={() => { void extendSession(); }} disabled={extendingSession}>{extendingSession ? "Шинэчилж байна..." : "Үргэлжлүүлэх"}</button>
+        </div>
+      </section>
+    </div>}
+    {changePasswordOpen && <ChangePasswordDialog onClose={() => setChangePasswordOpen(false)} />}
+    {accountSettingsOpen && user && <AccountSettingsDialog user={user} onClose={() => setAccountSettingsOpen(false)} />}
   </div>;
+}
+
+function ChangePasswordDialog({ onClose }: { onClose(): void }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState(false);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const currentPassword = String(form.get("currentPassword") ?? "");
+    const newPassword = String(form.get("newPassword") ?? "");
+    const confirmPassword = String(form.get("confirmPassword") ?? "");
+    if (newPassword !== confirmPassword) { setError("Шинэ нууц үг давтан оруулсан утгатай таарахгүй байна."); return; }
+
+    setSaving(true);
+    setError("");
+    try {
+      await api("/api/auth/password", { method: "POST", body: JSON.stringify({ currentPassword, newPassword }) });
+      setSuccess(true);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Нууц үгийг шинэчлэх боломжгүй байна.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <div className="account-dialog-backdrop" role="presentation"><section className="account-dialog" role="dialog" aria-modal="true" aria-labelledby="change-password-title"><h2 id="change-password-title">Нууц үг солих</h2>{success ? <><p className="account-dialog-success">Нууц үг амжилттай шинэчлэгдлээ.</p><div className="account-dialog-actions"><button type="button" className="primary-button" onClick={onClose}>Хаах</button></div></> : <form onSubmit={submit}><label>Одоогийн нууц үг<input name="currentPassword" type="password" autoComplete="current-password" required disabled={saving} /></label><label>Шинэ нууц үг<input name="newPassword" type="password" autoComplete="new-password" minLength={12} required disabled={saving} /></label><label>Шинэ нууц үг давтах<input name="confirmPassword" type="password" autoComplete="new-password" minLength={12} required disabled={saving} /></label>{error && <p className="account-dialog-error" role="alert">{error}</p>}<div className="account-dialog-actions"><button type="button" className="secondary-button" onClick={onClose} disabled={saving}>Болих</button><button type="submit" className="primary-button" disabled={saving}>{saving ? "Хадгалж байна..." : "Нууц үг солих"}</button></div></form>}</section></div>;
+}
+
+function AccountSettingsDialog({ user, onClose }: { user: AuthenticatedUser; onClose(): void }) {
+  return <div className="account-dialog-backdrop" role="presentation"><section className="account-dialog" role="dialog" aria-modal="true" aria-labelledby="account-settings-title"><h2 id="account-settings-title">Бүртгэлийн тохиргоо</h2><dl className="account-details"><div><dt>Нэр</dt><dd>{user.fullName}</dd></div><div><dt>Имэйл</dt><dd>{user.email}</dd></div><div><dt>Эрх</dt><dd>{workspaceRoleLabels[user.role] ?? user.role}</dd></div><div><dt>Байгууллага</dt><dd>{user.organizationName}</dd></div></dl><div className="account-dialog-actions"><button type="button" className="primary-button" onClick={onClose}>Хаах</button></div></section></div>;
 }
 
 type DashboardSummary = {

@@ -231,6 +231,42 @@ export class InMemoryAuthStore implements AuthStore {
     return toAuthenticatedUser(user);
   }
 
+  async getSessionExpiresAt(token: string | undefined): Promise<Date | null> {
+    if (!token) return null;
+
+    const tokenHash = await hashSessionToken(token);
+    const session = this.sessionsByHash.get(tokenHash);
+    if (!session || session.revokedAt || session.expiresAt.getTime() <= Date.now()) return null;
+
+    return session.expiresAt;
+  }
+
+  async extendSession(token: string | undefined): Promise<Date | null> {
+    if (!token) return null;
+
+    const tokenHash = await hashSessionToken(token);
+    const session = this.sessionsByHash.get(tokenHash);
+    if (!session || session.revokedAt || session.expiresAt.getTime() <= Date.now()) return null;
+
+    session.expiresAt = sessionExpiresAt();
+    return session.expiresAt;
+  }
+
+  async changePassword(token: string | undefined, currentPassword: string, newPassword: string): Promise<boolean> {
+    if (!token) return false;
+
+    const tokenHash = await hashSessionToken(token);
+    const session = this.sessionsByHash.get(tokenHash);
+    if (!session || session.revokedAt || session.expiresAt.getTime() <= Date.now()) return false;
+
+    const user = this.usersById.get(session.userId);
+    if (!user || !(await verifyPassword(currentPassword, user.passwordHash))) return false;
+
+    assertAcceptablePassword(newPassword);
+    user.passwordHash = await hashPassword(newPassword);
+    return true;
+  }
+
   async listStaff(actor: AuthenticatedUser): Promise<ManagedUser[]> {
     if (!isCenterManager(actor.role)) return [];
     return [...this.usersById.values()]

@@ -83,6 +83,9 @@ export type AnonymousSample = {
   completedAt?: string | null;
   approvedByName?: string | null;
   approvedAt?: string | null;
+  returnedByName?: string | null;
+  returnedAt?: string | null;
+  returnNote?: string | null;
   substitutedByName?: string | null;
   substitutedAt?: string | null;
   batchProgress?: Array<{

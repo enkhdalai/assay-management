@@ -44,6 +44,9 @@ export type AuthStore = {
   updateStaff(id: string, input: StaffUpdate, actor: AuthenticatedUser): Promise<boolean>;
   login(email: string, password: string): Promise<LoginResult>;
   getUserBySessionToken(token: string | undefined): Promise<AuthenticatedUser | null>;
+  getSessionExpiresAt(token: string | undefined): Promise<Date | null>;
+  extendSession(token: string | undefined): Promise<Date | null>;
+  changePassword(token: string | undefined, currentPassword: string, newPassword: string): Promise<boolean>;
   revokeSession(token: string | undefined): Promise<void>;
   getSetupStatus(): Promise<SetupStatus>;
   createFirstAdmin(input: CreateFirstAdminInput): Promise<LoginResult>;

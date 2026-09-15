@@ -28,7 +28,7 @@ const EXAMINATION_ROLES = new Set(["system_admin", "assay_admin", "chemist", "la
 const inMemoryBatches: BullionIntakeBatchRecord[] = [];
 let nextMemoryExaminationNumber = 1;
 const batchOwners = new Map<string, string>();
-const memoryExaminations = new Map<string, { revisionNo: number; input: SubmitBullionExaminationInput; submittedAt: string | null }>();
+const memoryExaminations = new Map<string, { revisionNo: number; input: SubmitBullionExaminationInput; submittedAt: string | null; returnedByName?: string | null; returnedAt?: string | null; returnNote?: string | null }>();
 const memorySubstitutions = new Map<string, { byName: string; transferredAt: string; recipientId: string }>();
 const visibleBatches = (user: AuthenticatedUser) => inMemoryBatches.filter((batch) => user.role === "system_admin" || batchOwners.get(batch.id) === user.organizationId);
 
@@ -101,9 +101,9 @@ bullionRoutes.post("/samples/:id/approve", async (c) => {
   const entryHash = await sha256Base64Url(JSON.stringify({ auditId, itemId: id, actor: user.id, action: "bullion_examination.approved", now }));
   const result = await db.batch([
     db.execute(sql`SELECT pg_advisory_xact_lock(741206825)`),
-    db.execute<{ id: string }>(sql`
+    db.execute<{ id: string; batchReadyForFinalization: boolean }>(sql`
       WITH target AS MATERIALIZED (
-        SELECT e.id
+        SELECT e.id, i.batch_id
         FROM bullion_intake_items i
         JOIN bullion_intake_batches b ON b.id = i.batch_id
         JOIN LATERAL (
@@ -127,10 +127,80 @@ bullionRoutes.post("/samples/:id/approve", async (c) => {
           'Laboratory director approved bullion examination', ${entryHash}
         FROM approved
       )
-      SELECT id FROM approved
+      SELECT approved.id,
+        NOT EXISTS (
+          SELECT 1
+          FROM bullion_intake_items batch_item
+          LEFT JOIN LATERAL (
+            SELECT status
+            FROM bullion_examination_revisions
+            WHERE bullion_item_id = batch_item.id
+            ORDER BY revision_no DESC
+            LIMIT 1
+          ) latest ON true
+          WHERE batch_item.batch_id = target.batch_id
+            AND COALESCE(latest.status::text, 'draft') <> 'approved'
+        ) AS "batchReadyForFinalization"
+      FROM approved
+      JOIN target ON target.id = approved.id
     `),
   ]);
-  if (!readRows(result[1]).length) return c.json({ ok: false, message: "Шинжилгээ баталгаажуулах боломжгүй байна." }, 409);
+  const [approved] = readRows(result[1]);
+  if (!approved) return c.json({ ok: false, message: "Шинжилгээ батлах боломжгүй байна." }, 409);
+  return c.json({ ok: true, data: { batchReadyForFinalization: approved.batchReadyForFinalization } });
+});
+
+bullionRoutes.post("/samples/:id/return", async (c) => {
+  const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
+  if (!user) return c.json({ ok: false }, 401);
+  if (!isCenterManager(user.role)) return c.json({ ok: false, message: "Шинжилгээ буцаах эрхгүй байна." }, 403);
+  const id = c.req.param("id");
+  const note = text(object(await c.req.json().catch(() => null)).note).trim();
+  if (!isUuid(id)) return c.json({ ok: false }, 400);
+  if (!note || note.length > 2_000) return c.json({ ok: false, message: "Буцаах тайлбарыг 1-2000 тэмдэгтээр оруулна уу." }, 400);
+  if (!c.env.DATABASE_URL) {
+    const revision = memoryExaminations.get(id);
+    const item = visibleBatches(user).flatMap((batch) => batch.items).find((candidate) => candidate.id === id);
+    if (!item || revision?.input.status !== "submitted") return c.json({ ok: false, message: "Буцаах шинжилгээ олдсонгүй." }, 409);
+    memoryExaminations.set(id, { ...revision, input: { ...revision.input, status: "draft" }, submittedAt: null, returnedByName: user.fullName, returnedAt: new Date().toISOString(), returnNote: note });
+    return c.json({ ok: true });
+  }
+
+  const db = createDatabase(c.env.DATABASE_URL);
+  const auditId = crypto.randomUUID();
+  const entryHash = await sha256Base64Url(JSON.stringify({ auditId, itemId: id, actor: user.id, action: "bullion_examination.returned", note }));
+  const result = await db.batch([
+    db.execute(sql`SELECT pg_advisory_xact_lock(741206825)`),
+    db.execute<{ id: string }>(sql`
+      WITH target AS MATERIALIZED (
+        SELECT e.id, e.status, e.submitted_at AS "submittedAt"
+        FROM bullion_intake_items i
+        JOIN bullion_intake_batches b ON b.id = i.batch_id
+        JOIN LATERAL (
+          SELECT * FROM bullion_examination_revisions
+          WHERE bullion_item_id = i.id ORDER BY revision_no DESC LIMIT 1
+        ) e ON true
+        WHERE i.id = ${id}::uuid AND e.status = 'submitted'
+          AND (${user.role} = 'system_admin' OR b.assay_center_id = ${user.organizationId}::uuid)
+        FOR UPDATE OF e
+      ), returned AS (
+        UPDATE bullion_examination_revisions
+        SET status = 'draft', submitted_at = NULL, returned_by_user_id = ${user.id}::uuid,
+          returned_at = now(), return_note = ${note}
+        WHERE id IN (SELECT id FROM target)
+        RETURNING id
+      ), audit AS (
+        INSERT INTO audit_logs (id, actor_user_id, actor_organization_id, action, entity_type, entity_id, old_values, new_values, reason, entry_hash)
+        SELECT ${auditId}::uuid, ${user.id}::uuid, ${user.organizationId}::uuid,
+          'bullion_examination.returned', 'bullion_examination_revisions', returned.id,
+          jsonb_build_object('status', target.status, 'submittedAt', target."submittedAt"),
+          jsonb_build_object('status', 'draft', 'submittedAt', NULL, 'returnNote', ${note}),
+          ${note}, ${entryHash}
+        FROM returned JOIN target ON target.id = returned.id
+      ) SELECT id FROM returned
+    `),
+  ]);
+  if (!readRows(result[1]).length) return c.json({ ok: false, message: "Зөвхөн эрхлэгчийн хяналтад байгаа шинжилгээг буцаах боломжтой." }, 409);
   return c.json({ ok: true });
 });
 
@@ -377,6 +447,7 @@ async function listSamples(env: EdgeApiEnv, user: AuthenticatedUser): Promise<An
         ...(isCenterManager(user.role) ? { bullionNo: item.bullionNo, batchId: batch.id, customerName: batch.customerName, registrationNo: batch.publicId,
           assignedChemistId: item.assignedChemistId ?? null, assignedChemistName: item.assignedChemistName ?? null,
           assignedAt: item.assignedAt ?? null, completedAt: revision?.submittedAt ?? null,
+          returnedByName: revision?.returnedByName ?? null, returnedAt: revision?.returnedAt ?? null, returnNote: revision?.returnNote ?? null,
           batchProgress: [...batchProgress.values()], batchReadyForFinalization: false, certificateNo: null } : {}),
         ...(substitution?.recipientId === user.id ? { substitutedByName: substitution.byName, substitutedAt: substitution.transferredAt } : {}),
         receivedAt: batch.receivedAt || batch.createdAt, sampleWeightMilligrams: item.sampleWeightMilligrams!,
@@ -386,8 +457,9 @@ async function listSamples(env: EdgeApiEnv, user: AuthenticatedUser): Promise<An
   const result = await createDatabase(env.DATABASE_URL).execute<AnonymousSample>(sql`
     SELECT i.id, b.id AS "batchId", customer.display_name AS "customerName", b.public_id AS "registrationNo",
       i.assigned_chemist_id AS "assignedChemistId", i.assigned_at AS "assignedAt", e.submitted_at AS "completedAt", e.approved_at AS "approvedAt",
+      e.returned_at AS "returnedAt", e.return_note AS "returnNote",
       (SELECT full_name FROM users WHERE id = i.assigned_chemist_id) AS "assignedChemistName",
-      approver.full_name AS "approvedByName",
+      approver.full_name AS "approvedByName", returner.full_name AS "returnedByName",
       transfer."substitutedByName", transfer."substitutedAt",
       i.bullion_no AS "bullionNo", i.examination_number::text AS "analysisNo", b.metal,
       b.received_at AS "receivedAt", i.sample_weight_milligrams::float AS "sampleWeightMilligrams",
@@ -423,6 +495,7 @@ async function listSamples(env: EdgeApiEnv, user: AuthenticatedUser): Promise<An
     JOIN customers customer ON customer.id = b.customer_id
     LEFT JOIN LATERAL (SELECT * FROM bullion_examination_revisions WHERE bullion_item_id = i.id ORDER BY revision_no DESC LIMIT 1) e ON true
     LEFT JOIN users approver ON approver.id = e.approved_by_user_id
+    LEFT JOIN users returner ON returner.id = e.returned_by_user_id
     LEFT JOIN LATERAL (
       SELECT sender.full_name AS "substitutedByName", audit.created_at AS "substitutedAt"
       FROM audit_logs audit JOIN users sender ON sender.id = audit.actor_user_id
