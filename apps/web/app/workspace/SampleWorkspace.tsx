@@ -127,18 +127,6 @@ export function SampleWorkspace({ manager = false, centerType }: { manager?: boo
     }
   }, [manager]);
   useEffect(() => { void refresh(); }, [refresh]);
-  useEffect(() => {
-    if (!manager) return;
-    const refreshVisible = () => { if (document.visibilityState === "visible") void refresh(); };
-    window.addEventListener("focus", refreshVisible);
-    document.addEventListener("visibilitychange", refreshVisible);
-    const timer = window.setInterval(refreshVisible, 15000);
-    return () => {
-      window.removeEventListener("focus", refreshVisible);
-      document.removeEventListener("visibilitychange", refreshVisible);
-      window.clearInterval(timer);
-    };
-  }, [manager, refresh]);
   const grouped = new Map<string, AnonymousSample[]>();
   if (manager) samples.forEach((sample) => {
     if (!sample.batchId) return;
@@ -185,11 +173,11 @@ export function SampleWorkspace({ manager = false, centerType }: { manager?: boo
   </section>;
   return <section className="workspace-section"><div className="workspace-toolbar"><input aria-label="Дээж хайх" placeholder="Харилцагч, бүртгэл эсвэл шинжилгээний дугаараар хайх" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} />{manager && <select aria-label="Төлөв" value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }}><option value="all">Бүх төлөв</option>{Object.entries(statusLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>}<button className="secondary-button" disabled={loading} onClick={() => { void refresh(); }} type="button">{loading ? "Шинэчилж байна..." : "Шинэчлэх"}</button></div>
     {error && <p className="login-error" role="alert">{error}</p>}
-{loading ? <WorkspaceLoadingSkeleton /> : <div className="workspace-table-scroll"><table className="workspace-table"><thead><tr><th>№</th><th>Харилцагч</th><th>Бүртгэл №</th><th>Огноо</th><th>Металл</th><th>Гулдмай</th><th>Химичдийн явц</th><th>Хуваарилсан огноо</th><th>Дууссан огноо</th><th>Төлөв</th></tr></thead><tbody>{pageBatches.map((batch, index) => <tr key={batch.id} className="manager-sample-row" tabIndex={0} onClick={() => setSelectedBatch(batch.id)} onKeyDown={(event) => {
+{loading ? <WorkspaceLoadingSkeleton /> : <div className="workspace-table-scroll"><table className="workspace-table sample-list-table"><thead><tr><th>№</th><th>Харилцагч</th><th>Бүртгэл №</th><th>Огноо</th><th>Металл</th><th>Гулдмай</th><th>Химичдийн явц</th><th>Хуваарилсан огноо</th><th>Дууссан огноо</th><th>Төлөв</th></tr></thead><tbody>{pageBatches.map((batch, index) => <tr key={batch.id} className="manager-sample-row" tabIndex={0} onClick={() => setSelectedBatch(batch.id)} onKeyDown={(event) => {
   if (event.key !== "Enter" && event.key !== " ") return;
   event.preventDefault(); setSelectedBatch(batch.id);
 }}>
-  <td>{offset + index + 1}</td><td>{batch.customerName}</td><td>{batch.registrationNo}</td><td>{workflowDate(batch.receivedAt, false)}</td><td>{batch.metal === "gold" ? "Алт" : "Мөнгө"}</td><td>{batch.samples.length}</td>
+  <td>{offset + index + 1}</td><td className="sample-customer-name" title={batch.customerName}><span>{batch.customerName}</span></td><td>{batch.registrationNo}</td><td>{workflowDate(batch.receivedAt, false)}</td><td>{batch.metal === "gold" ? "Алт" : "Мөнгө"}</td><td>{batch.samples.length}</td>
   <td><BatchChemistAssignment samples={batch.samples} onSaved={refresh} /></td><td className="sample-workflow-date">{batch.assignedAt ? <time dateTime={batch.assignedAt}>{workflowDate(batch.assignedAt)}</time> : "-"}</td><td className="sample-workflow-date">{batch.completedAt ? <time dateTime={batch.completedAt}>{workflowDate(batch.completedAt)}</time> : "-"}</td><td><StatusBadge status={batch.status} /></td></tr>)}</tbody></table>{filteredBatches.length === 0 && <p>Дээж олдсонгүй.</p>}</div>}
     {!loading && filteredBatches.length > 0 && <nav className="sample-pagination" aria-label="Хуудаслалт">
       <span>{offset + 1}–{Math.min(offset + 25, filteredBatches.length)} / {filteredBatches.length}</span>

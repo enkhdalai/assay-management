@@ -46,14 +46,35 @@ export function IntakeWorkspace({ manager }: { manager: boolean }) {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<BullionIntakeBatchRecord | "gold" | "silver" | null>(null);
-  const [trackingId, setTrackingId] = useState<string | null>(null);
+  const [tracking, setTracking] = useState<{ batch: BullionIntakeBatchRecord; samples: AnonymousSample[] } | null>(null);
+  const [openingTrackingId, setOpeningTrackingId] = useState<string | null>(null);
   const [creatingCustomer, setCreatingCustomer] = useState(false);
   const refresh = useCallback(() => Promise.all([api<{ data: BullionIntakeBatchRecord[] }>("/api/v1/bullion/intakes"), api<{ data: CustomerOption[] }>("/api/v1/customers/lookup")])
     .then(([intakes, lookup]) => { setBatches(intakes.data); setCustomers(lookup.data); setError(""); })
     .catch((error) => setError(error.message)).finally(() => setLoading(false)), []);
   useEffect(() => { void refresh(); }, [refresh]);
+  const openTracking = useCallback(async (batchId: string) => {
+    setOpeningTrackingId(batchId);
+    try {
+      const [intakes, sampleResult] = await Promise.all([
+        api<{ data: BullionIntakeBatchRecord[] }>("/api/v1/bullion/intakes", { cache: "no-store" }),
+        manager ? api<{ data: AnonymousSample[] }>("/api/v1/bullion/samples", { cache: "no-store" }) : Promise.resolve({ data: [] as AnonymousSample[] }),
+      ]);
+      const batch = intakes.data.find((candidate) => candidate.id === batchId);
+      if (!batch) throw new Error("Бүртгэл олдсонгүй.");
+      setBatches(intakes.data);
+      setTracking({ batch, samples: sampleResult.data.filter((sample) => sample.batchId === batchId) });
+      setError("");
+    } catch (error) {
+      setError((error as Error).message);
+    } finally {
+      setOpeningTrackingId(null);
+    }
+  }, [manager]);
+  const refreshTracking = useCallback(async () => {
+    if (tracking) await openTracking(tracking.batch.id);
+  }, [openTracking, tracking]);
   const filtered = batches.filter((batch) => `${batch.publicId} ${batch.customerName} ${batch.items.map((item) => item.bullionNo).join(" ")}`.toLowerCase().includes(search.trim().toLowerCase()));
-  const tracking = batches.find((batch) => batch.id === trackingId);
   return <section className="workspace-section">
     <div className="workspace-toolbar"><input aria-label="Бүртгэл хайх" placeholder="Дугаар, харилцагчаар хайх" value={search} onChange={(event) => setSearch(event.target.value)} />
       <button type="button" className="secondary-button intake-refresh-button" aria-label="Шинэчлэх" title="Шинэчлэх" disabled={loading} onClick={refresh}><RefreshCw size={20} aria-hidden="true" /></button>
@@ -61,25 +82,16 @@ export function IntakeWorkspace({ manager }: { manager: boolean }) {
       <button type="button" className="primary-button" onClick={() => setEditing("gold")}>Алтан гулдмай бүртгэх</button>
       <button type="button" className="primary-button" onClick={() => setEditing("silver")}>Мөнгөн гулдмай бүртгэх</button></div>
     {error && <p role="alert" className="login-error">{error}</p>}
-    {loading ? <WorkspaceLoadingSkeleton /> : <div className="workspace-table-scroll"><table className="workspace-table"><thead><tr><th>Бүртгэл №</th><th>Харилцагч</th><th>Огноо</th><th>Металл</th><th>Гулдмай</th><th>Бүртгэсэн ажилтан</th><th>Төлөв</th></tr></thead><tbody>{filtered.map((batch) => <tr key={batch.id} className="intake-batch-row" tabIndex={0} onClick={() => setEditing(batch)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setEditing(batch); } }} aria-label={`${batch.publicId} бүртгэлийн дэлгэрэнгүй`}><td><strong className="registration-number">{batch.publicId}</strong></td><td>{batch.customerName}</td><td>{intakeDate(batch.receivedAt || batch.createdAt)}</td><td>{batch.metal === "gold" ? "Алт" : "Мөнгө"}</td><td>{batch.pieceCount}</td><td>{batch.receivedByName || "-"}</td><td><button type="button" className="secondary-button intake-status-button" onClick={(event) => { event.stopPropagation(); setTrackingId(batch.id); }} onKeyDown={(event) => event.stopPropagation()}>{intakeStatus(batch.status)}</button></td></tr>)}</tbody></table>{filtered.length === 0 && <p>Бүртгэл олдсонгүй.</p>}</div>}
+    {loading ? <WorkspaceLoadingSkeleton /> : <div className="workspace-table-scroll"><table className="workspace-table"><thead><tr><th>Бүртгэл №</th><th>Харилцагч</th><th>Огноо</th><th>Металл</th><th>Гулдмай</th><th>Бүртгэсэн ажилтан</th><th>Төлөв</th></tr></thead><tbody>{filtered.map((batch) => <tr key={batch.id} className="intake-batch-row" tabIndex={0} onClick={() => setEditing(batch)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setEditing(batch); } }} aria-label={`${batch.publicId} бүртгэлийн дэлгэрэнгүй`}><td><strong className="registration-number">{batch.publicId}</strong></td><td>{batch.customerName}</td><td>{intakeDate(batch.receivedAt || batch.createdAt)}</td><td>{batch.metal === "gold" ? "Алт" : "Мөнгө"}</td><td>{batch.pieceCount}</td><td>{batch.receivedByName || "-"}</td><td><button type="button" className="secondary-button intake-status-button" disabled={openingTrackingId === batch.id} onClick={(event) => { event.stopPropagation(); void openTracking(batch.id); }} onKeyDown={(event) => event.stopPropagation()}>{openingTrackingId === batch.id ? "Уншиж байна..." : intakeStatus(batch.status)}</button></td></tr>)}</tbody></table>{filtered.length === 0 && <p>Бүртгэл олдсонгүй.</p>}</div>}
     {editing && <IntakeDialog key={typeof editing === "string" ? editing : editing.id} batch={typeof editing === "string" ? null : editing} initialMetal={typeof editing === "string" ? editing : editing.metal} customers={customers} manager={manager} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); void refresh(); }} />}
-    {tracking && <AssignmentDialog batch={tracking} manager={manager} onClose={() => setTrackingId(null)} onSaved={refresh} />}
+    {tracking && <AssignmentDialog batch={tracking.batch} samples={tracking.samples} manager={manager} onClose={() => setTracking(null)} onSaved={refreshTracking} />}
     {creatingCustomer && <CreateCustomerDialog onClose={() => setCreatingCustomer(false)} onCreated={(customer) => { setCustomers((current) => [...current, { ...customer, registrationNumber: customer.registrationNumberMasked, province: customer.province ?? null, district: customer.district ?? null, origin: null }]); setCreatingCustomer(false); }} />}
   </section>;
 }
 
-function AssignmentDialog({ batch, manager, onClose, onSaved }: {
-  batch: BullionIntakeBatchRecord; manager: boolean; onClose(): void; onSaved(): Promise<void>;
+function AssignmentDialog({ batch, samples, manager, onClose, onSaved }: {
+  batch: BullionIntakeBatchRecord; samples: AnonymousSample[]; manager: boolean; onClose(): void; onSaved(): Promise<void>;
 }) {
-  const [samples, setSamples] = useState<AnonymousSample[] | null>(null);
-  useEffect(() => {
-    if (!manager) return;
-    let active = true;
-    void api<{ data: AnonymousSample[] }>("/api/v1/bullion/samples")
-      .then((result) => { if (active) setSamples(result.data.filter((sample) => sample.batchId === batch.id)); })
-      .catch(() => { if (active) setSamples([]); });
-    return () => { active = false; };
-  }, [batch.id, manager]);
   return <WorkspaceDialog title={`${batch.publicId} · Дээжийн хуваарилалт`} onClose={onClose}>
     <BatchWorkflowTimeline batch={batch} samples={samples} />
     <div className="workspace-table-scroll"><table className="workspace-table">
