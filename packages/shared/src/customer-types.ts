@@ -43,6 +43,9 @@ export type OrganizationProfileInput = {
   organizationKind?: string;
   bankName?: string;
   bankAccount?: string;
+  postalAddress?: string;
+  englishName?: string;
+  legacyTypeCode?: string;
   province?: string;
   district?: string;
   bag?: string;

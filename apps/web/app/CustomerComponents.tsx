@@ -217,7 +217,8 @@ function CustomerDetailView({ customer }: { customer: CustomerDetail }) {
   const fields: Array<[string, string | undefined | null]> = [
     ["Харилцагчийн төрөл", customer.type === "individual" ? "Иргэн" : "Байгууллага"], ["Регистр", customer.registrationNumber],
     ["Имэйл", customer.email], ["Утас", customer.phone], ["Хаяг", customer.address], ["Ордын нэр", profile.depositName],
-    ["Байгууллагын төрөл", profile.organizationKind], ["Банкны нэр", profile.bankName], ["Банкны данс", profile.bankAccount],
+    ["Байгууллагын төрөл", profile.organizationKind], ["Өмнөх системийн төрөл", profile.legacyTypeCode], ["Англи нэршил", profile.englishName],
+    ["Банкны нэр", profile.bankName], ["Банкны данс", profile.bankAccount], ["Шуудангийн хаяг", profile.postalAddress],
     ["Аймаг, хот", profile.province ?? customer.province], ["Сум, дүүрэг", profile.district ?? customer.district], ["Баг, хороо", profile.bag],
     ["Салбар байгууллага", profile.branchName], ["Гулдмайн эхний дугаар", profile.mineInitialNumber],
     ["Харилцах албан хаагч", profile.contactName], ["Харилцах албан хаагчийн утас", profile.contactPhone], ["Тайлбар", profile.notes],
@@ -238,6 +239,9 @@ function CustomerEditForm({ customer, error, saving, onCancel, onSubmit }: { cus
     <label><span>Байгууллагын төрөл</span><input name="organizationKind" defaultValue={profile.organizationKind ?? ""} /></label>
     <label><span>Банкны нэр</span><input name="bankName" defaultValue={profile.bankName ?? ""} /></label>
     <label><span>Банкны данс</span><input name="bankAccount" defaultValue={profile.bankAccount ?? ""} /></label>
+    <label><span>Шуудангийн хаяг</span><input name="postalAddress" defaultValue={profile.postalAddress ?? ""} /></label>
+    <label><span>Англи нэршил</span><input name="englishName" defaultValue={profile.englishName ?? ""} /></label>
+    <label><span>Өмнөх системийн төрөл</span><input name="legacyTypeCode" defaultValue={profile.legacyTypeCode ?? ""} /></label>
     <label><span>Аймаг / хот</span><input name="province" maxLength={120} defaultValue={profile.province ?? customer.province ?? ""} /></label>
     <label><span>Сум / дүүрэг</span><input name="district" maxLength={120} defaultValue={profile.district ?? customer.district ?? ""} /></label>
     <label><span>Баг / хороо</span><input name="bag" defaultValue={profile.bag ?? ""} /></label>
@@ -425,7 +429,8 @@ function profileFromForm(form: FormData) {
   return {
     depositName: readFormText(form, "depositName"), branchName: readFormText(form, "branchName"),
     organizationKind: readFormText(form, "organizationKind"), bankName: readFormText(form, "bankName"),
-    bankAccount: readFormText(form, "bankAccount"), province: readFormText(form, "province"),
+    bankAccount: readFormText(form, "bankAccount"), postalAddress: readFormText(form, "postalAddress"),
+    englishName: readFormText(form, "englishName"), legacyTypeCode: readFormText(form, "legacyTypeCode"), province: readFormText(form, "province"),
     district: readFormText(form, "district"), bag: readFormText(form, "bag"),
     mineInitialNumber: readFormText(form, "mineInitialNumber"), contactName: readFormText(form, "contactName"),
     contactPhone: readFormText(form, "contactPhone"), notes: readFormText(form, "notes"),

@@ -149,8 +149,9 @@ customerRoutes.patch("/:id", async (c) => {
     input.address ? protectSensitiveValue(input.address, c.env.FIELD_ENCRYPTION_KEY, maskSensitiveValue) : null,
   ]);
   const profile: OrganizationProfileInput = input.organizationProfile ?? { province: input.province, district: input.district };
-  const [bankAccountEncrypted, contactPhoneEncrypted] = await Promise.all([
+  const [bankAccountEncrypted, postalAddressEncrypted, contactPhoneEncrypted] = await Promise.all([
     profile.bankAccount ? protectSensitiveValue(profile.bankAccount, c.env.FIELD_ENCRYPTION_KEY, maskSensitiveValue) : null,
+    profile.postalAddress ? protectSensitiveValue(profile.postalAddress, c.env.FIELD_ENCRYPTION_KEY, maskSensitiveValue) : null,
     profile.contactPhone ? protectSensitiveValue(profile.contactPhone, c.env.FIELD_ENCRYPTION_KEY, maskPhone) : null,
   ]);
   const updated = readRows(await db.execute<{ id: string }>(sql`
@@ -165,15 +166,16 @@ customerRoutes.patch("/:id", async (c) => {
   if (!updated) return c.json({ ok: false }, 404);
   await db.execute(sql`
     INSERT INTO customer_organization_profiles (
-      customer_id, deposit_name, branch_name, organization_kind, bank_name, bank_account_encrypted,
+      customer_id, deposit_name, branch_name, organization_kind, bank_name, bank_account_encrypted, postal_address_encrypted, english_name, legacy_type_code,
       province, district, bag, mine_initial_number, contact_name, contact_phone_encrypted, notes, updated_at
     ) VALUES (
       ${id}::uuid, ${profile.depositName || null}, ${profile.branchName || null}, ${profile.organizationKind || null},
-      ${profile.bankName || null}, ${bankAccountEncrypted}, ${profile.province || null}, ${profile.district || null},
+      ${profile.bankName || null}, ${bankAccountEncrypted}, ${postalAddressEncrypted}, ${profile.englishName || null}, ${profile.legacyTypeCode || null}, ${profile.province || null}, ${profile.district || null},
       ${profile.bag || null}, ${profile.mineInitialNumber || null}, ${profile.contactName || null}, ${contactPhoneEncrypted}, ${profile.notes || null}, now()
     ) ON CONFLICT (customer_id) DO UPDATE SET
       deposit_name = EXCLUDED.deposit_name, branch_name = EXCLUDED.branch_name, organization_kind = EXCLUDED.organization_kind,
       bank_name = EXCLUDED.bank_name, bank_account_encrypted = EXCLUDED.bank_account_encrypted,
+      postal_address_encrypted = EXCLUDED.postal_address_encrypted, english_name = EXCLUDED.english_name, legacy_type_code = EXCLUDED.legacy_type_code,
       province = EXCLUDED.province, district = EXCLUDED.district, bag = EXCLUDED.bag,
       mine_initial_number = EXCLUDED.mine_initial_number, contact_name = EXCLUDED.contact_name,
       contact_phone_encrypted = EXCLUDED.contact_phone_encrypted, notes = EXCLUDED.notes, updated_at = now()
@@ -225,7 +227,7 @@ async function listCustomersFromDatabase(
       organization.name,
       c.created_at
     ORDER BY c.created_at DESC
-    LIMIT 200
+    LIMIT 1000
   `);
 
   return Promise.all(readRows(result).map((row) => mapCustomerRow(row, encryptionKey)));
@@ -236,7 +238,8 @@ async function getCustomerDetail(db: AppDatabase, user: AuthenticatedUser, id: s
     SELECT c.id, c.type, c.display_name AS "displayName", c.registration_number_encrypted AS "registrationNumber",
       c.email_encrypted AS email, c.phone_encrypted AS phone, c.address_encrypted AS address,
       p.deposit_name AS "depositName", p.branch_name AS "branchName", p.organization_kind AS "organizationKind",
-      p.bank_name AS "bankName", p.bank_account_encrypted AS "bankAccount", p.province, p.district, p.bag,
+      p.bank_name AS "bankName", p.bank_account_encrypted AS "bankAccount", p.postal_address_encrypted AS "postalAddress",
+      p.english_name AS "englishName", p.legacy_type_code AS "legacyTypeCode", p.province, p.district, p.bag,
       p.mine_initial_number AS "mineInitialNumber", p.contact_name AS "contactName",
       p.contact_phone_encrypted AS "contactPhone", p.notes,
       count(ar.id)::int AS "totalAssays", COALESCE(sum(ar.received_gross_weight_grams), 0)::float AS "totalGrossWeightGrams",
@@ -248,10 +251,11 @@ async function getCustomerDetail(db: AppDatabase, user: AuthenticatedUser, id: s
     GROUP BY c.id, p.customer_id
   `))[0];
   if (!row) return null;
-  const [registrationNumber, email, phone, address, bankAccount, contactPhone] = await Promise.all([
+  const [registrationNumber, email, phone, address, bankAccount, postalAddress, contactPhone] = await Promise.all([
     revealStoredValue(row.registrationNumber, encryptionKey), revealStoredValue(row.email, encryptionKey),
     revealStoredValue(row.phone, encryptionKey), revealStoredValue(row.address, encryptionKey),
-    revealStoredValue(row.bankAccount, encryptionKey), revealStoredValue(row.contactPhone, encryptionKey),
+    revealStoredValue(row.bankAccount, encryptionKey), revealStoredValue(row.postalAddress, encryptionKey),
+    revealStoredValue(row.contactPhone, encryptionKey),
   ]);
   return {
     id: row.id, type: row.type, displayName: row.displayName, registrationNumber, email, phone, address,
@@ -263,7 +267,8 @@ async function getCustomerDetail(db: AppDatabase, user: AuthenticatedUser, id: s
     createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : row.createdAt,
     organizationProfile: {
       depositName: row.depositName || undefined, branchName: row.branchName || undefined, organizationKind: row.organizationKind || undefined,
-      bankName: row.bankName || undefined, bankAccount: bankAccount || undefined, province: row.province || undefined,
+      bankName: row.bankName || undefined, bankAccount: bankAccount || undefined, postalAddress: postalAddress || undefined,
+      englishName: row.englishName || undefined, legacyTypeCode: row.legacyTypeCode || undefined, province: row.province || undefined,
       district: row.district || undefined, bag: row.bag || undefined, mineInitialNumber: row.mineInitialNumber || undefined,
       contactName: row.contactName || undefined, contactPhone: contactPhone || undefined, notes: row.notes || undefined,
     },
@@ -337,17 +342,18 @@ async function createCustomerInDatabase(
     ? input.organizationProfile
     : input.province || input.district ? { province: input.province, district: input.district } : undefined;
   if (profile) {
-    const [bankAccountEncrypted, contactPhoneEncrypted] = await Promise.all([
+    const [bankAccountEncrypted, postalAddressEncrypted, contactPhoneEncrypted] = await Promise.all([
       profile.bankAccount ? protectSensitiveValue(profile.bankAccount, encryptionKey, maskSensitiveValue) : null,
+      profile.postalAddress ? protectSensitiveValue(profile.postalAddress, encryptionKey, maskSensitiveValue) : null,
       profile.contactPhone ? protectSensitiveValue(profile.contactPhone, encryptionKey, maskPhone) : null,
     ]);
     await db.execute(sql`
       INSERT INTO customer_organization_profiles (
-        customer_id, deposit_name, branch_name, organization_kind, bank_name, bank_account_encrypted,
+        customer_id, deposit_name, branch_name, organization_kind, bank_name, bank_account_encrypted, postal_address_encrypted, english_name, legacy_type_code,
         province, district, bag, mine_initial_number, contact_name, contact_phone_encrypted, notes
       ) VALUES (
         ${record.id}, ${profile.depositName || null}, ${profile.branchName || null}, ${profile.organizationKind || null},
-        ${profile.bankName || null}, ${bankAccountEncrypted},
+        ${profile.bankName || null}, ${bankAccountEncrypted}, ${postalAddressEncrypted}, ${profile.englishName || null}, ${profile.legacyTypeCode || null},
         ${profile.province || null}, ${profile.district || null}, ${profile.bag || null}, ${profile.mineInitialNumber || null},
         ${profile.contactName || null}, ${contactPhoneEncrypted}, ${profile.notes || null}
       )
@@ -447,6 +453,9 @@ function normalizeOrganizationProfile(value: Record<string, unknown>) {
     organizationKind: readText(value.organizationKind),
     bankName: readText(value.bankName),
     bankAccount: readText(value.bankAccount),
+    postalAddress: readText(value.postalAddress),
+    englishName: readText(value.englishName),
+    legacyTypeCode: readText(value.legacyTypeCode),
     province: readText(value.province),
     district: readText(value.district),
     bag: readText(value.bag),
@@ -592,6 +601,9 @@ type CustomerDetailRow = {
   organizationKind: string | null;
   bankName: string | null;
   bankAccount: string | null;
+  postalAddress: string | null;
+  englishName: string | null;
+  legacyTypeCode: string | null;
   province: string | null;
   district: string | null;
   bag: string | null;
