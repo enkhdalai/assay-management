@@ -19,3 +19,10 @@ MONPASS_TRUST_CLASS2_4_CA_PEM=
 # Use the OCSP URL in the signer certificate's Authority Information Access
 # extension. Do not substitute a responder for a different issuing CA.
 MONPASS_OCSP_URL=
+# Optional Tridum chain. The provider is determined from the signer
+# certificate's verified CA path, never from browser input.
+MONGOLIAN_NATIONAL_ROOT_CA_PEM=
+MONGOLIAN_NATIONAL_ISSUING_CA_PEM=
+TRIDUM_TRUST_ISSUING_CA_PEM=
+TRIDUM_TRUST_ISSUING_SUB_CA_PEM=
+TRIDUM_OCSP_URL=

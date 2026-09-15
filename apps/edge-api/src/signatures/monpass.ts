@@ -8,8 +8,7 @@ type MonpassResponse = {
   tobesigned: string;
 };
 
-export type CryptographicallyVerifiedMonpassSignature = {
-  provider: "monpass";
+export type CryptographicallyVerifiedEsignSignature = {
   signerCertificate: string;
   signatureValue: string;
   signatureAlgorithm: "SHA256withRSA";
@@ -100,8 +99,8 @@ function certificateDetails(certificate: Uint8Array) {
   };
 }
 
-/** Verifies the exact Tridum eSign response format supplied by MonPass tokens. */
-export async function verifyMonpassSignature(responseValue: unknown, expectedDocumentHash: string): Promise<CryptographicallyVerifiedMonpassSignature> {
+/** Verifies the common eSign response envelope before its CA provider is trusted. */
+export async function verifyEsignSignature(responseValue: unknown, expectedDocumentHash: string): Promise<CryptographicallyVerifiedEsignSignature> {
   let parsedResponse = responseValue;
   if (typeof responseValue === "string") {
     if (responseValue.length > 131072) throw new Error("eSign-ийн хариу зөвшөөрөгдөх хэмжээнээс хэтэрсэн байна.");
@@ -133,7 +132,7 @@ export async function verifyMonpassSignature(responseValue: unknown, expectedDoc
   const verified = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, signature, textEncoder.encode(response.tobesigned));
   if (!verified) throw new Error("eSign-ийн RSA гарын үсэг баталгаажсангүй.");
   return {
-    provider: "monpass", signerCertificate: response.certificate, signatureValue: response.signature,
+    signerCertificate: response.certificate, signatureValue: response.signature,
     signatureAlgorithm: "SHA256withRSA", signedAt: new Date(providerTimestamp * 1000).toISOString(),
     validationEvidence: {
       verification: "cryptographically_verified_pending_ca_validation", keyId: signedEnvelope.keyID,

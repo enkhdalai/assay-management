@@ -17,8 +17,8 @@ import { isCenterManager } from "../../../../packages/shared/src/workspace-acces
 import type { AnonymousSample } from "../../../../packages/shared/src/bullion-types";
 import { calculateBullion, BULLION_CALCULATION_VERSION } from "../../../../packages/shared/src/bullion-calculation";
 import { issueCertificate } from "./certificates";
-import { verifyMonpassSignature } from "../signatures/monpass";
-import { verifyMonpassCertificateTrust } from "../signatures/monpass-trust";
+import { verifyEsignSignature } from "../signatures/monpass";
+import { verifyEsignCertificateTrust } from "../signatures/monpass-trust";
 import { recordVerifiedCertificateSignature } from "../signatures/certificates";
 
 export const bullionRoutes = new Hono<{ Bindings: EdgeApiEnv }>();
@@ -190,14 +190,14 @@ bullionRoutes.post("/batches/:id/signature-evidence", async (c) => {
   `));
   if (!certificate?.documentHash) return c.json({ ok: false, message: "Гэрчилгээ гарын үсэг зурахад бэлэн биш байна." }, 409);
   let verified;
-  try { verified = await verifyMonpassSignature(body.providerResponse, certificate.documentHash); }
+  try { verified = await verifyEsignSignature(body.providerResponse, certificate.documentHash); }
   catch (error) { return c.json({ ok: false, message: error instanceof Error ? error.message : "eSign-ийн гарын үсэг баталгаажсангүй." }, 400); }
   let validationEvidence: Record<string, unknown> = verified.validationEvidence;
   try {
-    const trust = await verifyMonpassCertificateTrust(verified.signerCertificate, c.env);
+    const trust = await verifyEsignCertificateTrust(verified.signerCertificate, c.env);
     const signed = await recordVerifiedCertificateSignature(db, {
       certificateId: certificate.id,
-      provider: verified.provider,
+      provider: trust.provider,
       providerTransactionId: verified.validationEvidence.tokenSerialNumber,
       signatureValue: verified.signatureValue,
       signerCertificate: verified.signerCertificate,
@@ -224,7 +224,7 @@ bullionRoutes.post("/batches/:id/signature-evidence", async (c) => {
     db.execute<{ id: string }>(sql`
       WITH saved AS (
         UPDATE bullion_certificates certificate
-        SET signature_status = 'cryptographically_verified', signature_provider = ${verified.provider},
+        SET signature_status = 'cryptographically_verified', signature_provider = ${null},
           signature_value = ${verified.signatureValue}, signer_certificate = ${verified.signerCertificate},
           signature_algorithm = ${verified.signatureAlgorithm}, signed_at = ${verified.signedAt}::timestamptz,
           validation_evidence = ${JSON.stringify(validationEvidence)}::jsonb
@@ -238,9 +238,9 @@ bullionRoutes.post("/batches/:id/signature-evidence", async (c) => {
         INSERT INTO audit_logs (id, actor_user_id, actor_organization_id, action, entity_type, entity_id, new_values, reason, entry_hash)
         SELECT ${auditId}::uuid, ${user.id}::uuid, ${user.organizationId}::uuid,
           'bullion_certificate.signature_evidence_received', 'bullion_certificates', id,
-          jsonb_build_object('provider', ${verified.provider}::text, 'signedAt', ${verified.signedAt}::timestamptz,
+          jsonb_build_object('provider', 'untrusted'::text, 'signedAt', ${verified.signedAt}::timestamptz,
             'certificateSerialNumber', ${verified.validationEvidence.certificateSerialNumber}::text),
-          'MonPass RSA signature verified; CA chain and revocation validation pending', ${entryHash}
+          'eSign RSA signature verified; provider CA chain and revocation validation pending', ${entryHash}
         FROM saved
       ) SELECT id FROM saved
     `),

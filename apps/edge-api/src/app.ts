@@ -38,6 +38,13 @@ export type EdgeApiEnv = {
   MONPASS_TRUST_ISSUING_CA_PEM?: string;
   MONPASS_TRUST_CLASS2_4_CA_PEM?: string;
   MONPASS_OCSP_URL?: string;
+  // Optional neutral aliases for the national CA chain. Existing MonPass
+  // bindings remain supported so this can be introduced without a secret rename.
+  MONGOLIAN_NATIONAL_ROOT_CA_PEM?: string;
+  MONGOLIAN_NATIONAL_ISSUING_CA_PEM?: string;
+  TRIDUM_TRUST_ISSUING_CA_PEM?: string;
+  TRIDUM_TRUST_ISSUING_SUB_CA_PEM?: string;
+  TRIDUM_OCSP_URL?: string;
   IMAGES?: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
