@@ -12,6 +12,7 @@
 .workspace-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 44px; margin: 0 0 14px; }
 .workspace-header > div { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .workspace-header h1 { font-size: 27px; line-height: 1.25; font-weight: 600; margin: 0; overflow-wrap: anywhere; }
+.workspace-shell.with-navigation .workspace-header h1 { font-weight: 600; }
 .workspace-account { display: flex; align-items: center; font-size: 15px; }
 .workspace-account span { overflow-wrap: anywhere; }
 .workspace-account small { display: block; color: #6e7982; margin-top: 4px; font-size: 13px; }
@@ -111,6 +112,7 @@
 .sample-list-scroll { overflow-x: hidden; }
 .sample-list-table { min-width: 0; table-layout: fixed; }
 .sample-list-table th, .sample-list-table td { box-sizing: border-box; }
+.sample-list-table th { font-weight: 400; }
 .sample-list-table th:nth-child(1), .sample-list-table td:nth-child(1) { width: 4%; }
 .sample-list-table th:nth-child(2), .sample-list-table td:nth-child(2) { width: 18%; }
 .sample-list-table th:nth-child(3), .sample-list-table td:nth-child(3) { width: 11%; }
@@ -246,7 +248,7 @@
 .timeline-pending { color: #9b5b08; }
 .timeline-pending i { width: 8px; height: 8px; border-radius: 50%; background: #e88400; }
 .batch-chemist-assignments { display: grid; gap: 6px; min-width: 205px; }
-.batch-chemist-assignment { display: flex; min-width: 0; align-items: center; gap: 6px; color: #a65c08; white-space: nowrap; }
+.batch-chemist-assignment { display: flex; min-width: 0; align-items: center; gap: 6px; color: #a65c08; font-weight: 400; white-space: nowrap; }
 .batch-chemist-assignment > i { width: 8px; height: 8px; border-radius: 50%; background: #e88400; flex: 0 0 8px; }
 .batch-chemist-assignment.is-complete { color: #17633c; }
 .batch-chemist-assignment .chemist-picker { min-width: 0; width: 100%; max-width: 148px; }
@@ -369,12 +371,12 @@
 .weight-row-remove-button { border-color: #f3bbbb; background: #fff8f8; color: #bc3a3a; }
 .weight-row-remove-button:hover:not(:disabled) { border-color: #d25454; background: #fff0f0; }
 .chemist-picker { min-width: 0; border: 1px solid #c3cedc; border-radius: 5px; background: white; }
-.chemist-picker .chemist-picker-trigger { display: flex; align-items: center; gap: 8px; padding: 8px 10px; cursor: pointer; width: 100%; border: 0; background: transparent; color: inherit; text-align: left; }
+.chemist-picker .chemist-picker-trigger { display: flex; align-items: center; gap: 8px; padding: 8px 10px; cursor: pointer; width: 100%; border: 0; background: transparent; color: inherit; font-weight: 400; text-align: left; }
 .chemist-picker-trigger span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chemist-picker svg { flex-shrink: 0; }
 .chemist-options { max-height: 220px; overflow-y: auto; border-top: 1px solid #c3cedc; padding: 4px; }
 .chemist-popover { position: fixed; margin: 0; border: 1px solid #c3cedc; border-radius: 5px; background: white; box-shadow: 0 6px 18px rgb(20 29 43 / 14%); color: #202b39; }
-.chemist-options button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px; background: white; border: 0; text-align: left; color: #202b39; }
+.chemist-options button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px; background: white; border: 0; color: #202b39; font-weight: 400; text-align: left; }
 .chemist-options button[aria-pressed="true"], .chemist-options button:hover:not(:disabled) { background: #f0f2f5; }
 .chemist-options button:disabled { opacity: 0.5; }
 .sample-metadata { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
