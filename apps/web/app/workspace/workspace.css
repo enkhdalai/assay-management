@@ -8,7 +8,7 @@
 .workspace-nav nav button:hover { background: #eef2f3; }
 .workspace-nav nav button[aria-current] { background: #fff; color: #263241; box-shadow: 0 1px 1px rgb(35 47 55 / 4%); }
 .workspace-nav-footer { margin: auto 16px 0; color: #637181; font-size: 13px; font-weight: 600; }
-.workspace-main { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; height: 100dvh; overflow: hidden; padding: 22px 14px 22px 10px; }
+.workspace-main { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; height: 100dvh; overflow: hidden; padding: 22px 20px 22px 10px; }
 .workspace-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 44px; margin: 0 0 14px; }
 .workspace-header > div { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .workspace-header h1 { font-size: 27px; line-height: 1.25; font-weight: 600; margin: 0; overflow-wrap: anywhere; }
@@ -108,16 +108,17 @@
 .workspace-table { border-collapse: collapse; width: 100%; font-size: 15px; text-align: left; }
 .workspace-table th { font-weight: 700; background: #f3f6f4; color: #65716a; padding: 14px 14px; white-space: nowrap; font-size: 13px; }
 .workspace-table td { padding: 15px 14px; border-bottom: 1px solid #dde3df; overflow-wrap: anywhere; max-width: 320px; }
-.sample-list-table { min-width: 1420px; table-layout: fixed; }
-.sample-list-table th:nth-child(1), .sample-list-table td:nth-child(1) { width: 42px; }
-.sample-list-table th:nth-child(2), .sample-list-table td:nth-child(2) { width: 220px; }
-.sample-list-table th:nth-child(3), .sample-list-table td:nth-child(3) { width: 104px; }
-.sample-list-table th:nth-child(4), .sample-list-table td:nth-child(4) { width: 92px; }
-.sample-list-table th:nth-child(5), .sample-list-table td:nth-child(5) { width: 70px; }
-.sample-list-table th:nth-child(6), .sample-list-table td:nth-child(6) { width: 72px; }
-.sample-list-table th:nth-child(7), .sample-list-table td:nth-child(7) { width: 230px; }
-.sample-list-table th:nth-child(8), .sample-list-table td:nth-child(8), .sample-list-table th:nth-child(9), .sample-list-table td:nth-child(9) { width: 170px; }
-.sample-list-table th:nth-child(10), .sample-list-table td:nth-child(10) { width: 145px; }
+.sample-list-scroll { overflow-x: hidden; }
+.sample-list-table { min-width: 0; table-layout: fixed; }
+.sample-list-table th, .sample-list-table td { box-sizing: border-box; }
+.sample-list-table th:nth-child(1), .sample-list-table td:nth-child(1) { width: 4%; }
+.sample-list-table th:nth-child(2), .sample-list-table td:nth-child(2) { width: 18%; }
+.sample-list-table th:nth-child(3), .sample-list-table td:nth-child(3) { width: 11%; }
+.sample-list-table th:nth-child(4), .sample-list-table td:nth-child(4) { width: 11%; }
+.sample-list-table th:nth-child(5), .sample-list-table td:nth-child(5) { width: 8%; }
+.sample-list-table th:nth-child(6), .sample-list-table td:nth-child(6) { width: 7%; }
+.sample-list-table th:nth-child(7), .sample-list-table td:nth-child(7) { width: 25%; }
+.sample-list-table th:nth-child(8), .sample-list-table td:nth-child(8) { width: 16%; }
 .sample-customer-name { overflow: hidden; }
 .sample-customer-name span { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.4; overflow-wrap: break-word; }
 .workspace-table tbody tr:hover { background: #f5faff; }
@@ -177,7 +178,6 @@
 .workspace-table .sample-number-button { color: inherit; text-decoration: none; }
 .workspace-table .registration-number-button { text-decoration: none; }
 .intake-status-button { white-space: nowrap; }
-.sample-workflow-date { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .organization-fields { display: grid; gap: 16px; }
 .organization-fields label { display: grid; gap: 6px; }
 .organization-row { cursor: pointer; }
@@ -246,11 +246,11 @@
 .timeline-pending { color: #9b5b08; }
 .timeline-pending i { width: 8px; height: 8px; border-radius: 50%; background: #e88400; }
 .batch-chemist-assignments { display: grid; gap: 6px; min-width: 205px; }
-.batch-chemist-assignment { display: flex; align-items: center; gap: 6px; color: #a65c08; white-space: nowrap; }
+.batch-chemist-assignment { display: flex; min-width: 0; align-items: center; gap: 6px; color: #a65c08; white-space: nowrap; }
 .batch-chemist-assignment > i { width: 8px; height: 8px; border-radius: 50%; background: #e88400; flex: 0 0 8px; }
 .batch-chemist-assignment.is-complete { color: #17633c; }
-.batch-chemist-assignment .chemist-picker { min-width: 160px; }
-.batch-chemist-assignment > span { font-size: 13px; }
+.batch-chemist-assignment .chemist-picker { min-width: 0; width: 100%; max-width: 148px; }
+.batch-chemist-assignment > span { min-width: 0; overflow: hidden; font-size: 13px; text-overflow: ellipsis; }
 .certificate-ready { color: #17633c; font-weight: 600; }
 .approval-notice { display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px; border: 1px solid #abd5bc; border-radius: 4px; background: #e7f6ed; color: #22643e; font-size: 14px; font-weight: 600; }
 .examination-actions > .approval-notice { margin-right: auto; }
@@ -315,6 +315,11 @@
 .examination-feedback { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 16px 0 0; }
 .chemist-form-panel > .examination-feedback { width: 100%; box-sizing: border-box; }
 .examination-feedback time { flex: 0 0 auto; color: #9f2424; font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.workspace-toast { position: fixed; z-index: 1000; right: 24px; bottom: 24px; display: flex; align-items: center; gap: 14px; max-width: min(440px, calc(100vw - 32px)); padding: 13px 14px 13px 16px; border: 1px solid; border-radius: 7px; box-shadow: 0 10px 28px rgb(20 29 43 / 18%); font-size: 14px; line-height: 1.45; }
+.workspace-toast-error { border-color: #fecaca; background: #fff7f7; color: #b42318; }
+.workspace-toast span { min-width: 0; }
+.workspace-toast button { display: grid; flex: 0 0 auto; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: inherit; }
+.workspace-toast button:hover { background: rgb(180 35 24 / 10%); }
 .workspace-dialog-actions .approval-notice { margin-right: 0; white-space: nowrap; }
 @media (max-width: 700px) {
   .examination-metadata { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -363,9 +368,9 @@
 .weight-row-icon-button:hover:not(:disabled) { border-color: #0c79d8; background: #e9f5ff; }
 .weight-row-remove-button { border-color: #f3bbbb; background: #fff8f8; color: #bc3a3a; }
 .weight-row-remove-button:hover:not(:disabled) { border-color: #d25454; background: #fff0f0; }
-.chemist-picker { min-width: 180px; border: 1px solid #c3cedc; border-radius: 5px; background: white; }
+.chemist-picker { min-width: 0; border: 1px solid #c3cedc; border-radius: 5px; background: white; }
 .chemist-picker .chemist-picker-trigger { display: flex; align-items: center; gap: 8px; padding: 8px 10px; cursor: pointer; width: 100%; border: 0; background: transparent; color: inherit; text-align: left; }
-.chemist-picker-trigger span { flex: 1; }
+.chemist-picker-trigger span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chemist-picker svg { flex-shrink: 0; }
 .chemist-options { max-height: 220px; overflow-y: auto; border-top: 1px solid #c3cedc; padding: 4px; }
 .chemist-popover { position: fixed; margin: 0; border: 1px solid #c3cedc; border-radius: 5px; background: white; box-shadow: 0 6px 18px rgb(20 29 43 / 14%); color: #202b39; }

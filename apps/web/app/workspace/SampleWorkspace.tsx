@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { Plus, Minus, ChevronLeft, ChevronRight, CircleCheck } from "lucide-react";
+import { Plus, Minus, ChevronLeft, ChevronRight, CircleCheck, X } from "lucide-react";
 import type { AnonymousSample, SubmitBullionExaminationInput } from "../../../../packages/shared/src/bullion-types";
 import { WorkspaceDialog } from "../OperationalWorkspace";
 import { api } from "./api";
@@ -10,7 +10,7 @@ import { calculateBullion, BULLION_CALCULATION_VERSION } from "../../../../packa
 import { WorkspaceLoadingSkeleton } from "./WorkspaceLoadingSkeleton";
 import { ChemistPicker } from "./ChemistPicker";
 
-const statusLabels: Record<string, string> = { pending: "Хүлээгдэж байна", draft: "Шинжилгээнд", submitted: "Эрхлэгчийн хяналтад", approved: "Баталгаажсан", rejected: "Буцаасан", superseded: "Өмнөх хувилбар" };
+const statusLabels: Record<string, string> = { pending: "Хүлээгдэж байна", draft: "Шинжилгээнд", submitted: "Эрхлэгчийн хяналтад", approved: "Баталсан", esign_approved: "eSign баталсан", rejected: "Буцаасан", superseded: "Өмнөх хувилбар" };
 type ManagerBatch = {
   id: string;
   customerName: string;
@@ -32,6 +32,7 @@ function bullionDisplayNumber(value?: string | null, fallback = "-") {
   return /^\d+$/.test(shortNumber) ? shortNumber.padStart(4, "0") : shortNumber;
 }
 function batchStatus(samples: AnonymousSample[]) {
+  if (samples.every((sample) => sample.certificateSignatureStatus === "signed" || sample.certificateSignatureStatus === "cryptographically_verified")) return "esign_approved";
   if (samples.every((sample) => sample.status === "approved")) return "approved";
   if (samples.some((sample) => sample.status === "submitted")) return "submitted";
   if (samples.some((sample) => sample.status === "draft")) return "draft";
@@ -173,12 +174,12 @@ export function SampleWorkspace({ manager = false, centerType }: { manager?: boo
   </section>;
   return <section className="workspace-section"><div className="workspace-toolbar"><input aria-label="Дээж хайх" placeholder="Харилцагч, бүртгэл эсвэл шинжилгээний дугаараар хайх" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} />{manager && <select aria-label="Төлөв" value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }}><option value="all">Бүх төлөв</option>{Object.entries(statusLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>}<button className="secondary-button" disabled={loading} onClick={() => { void refresh(); }} type="button">{loading ? "Шинэчилж байна..." : "Шинэчлэх"}</button></div>
     {error && <p className="login-error" role="alert">{error}</p>}
-{loading ? <WorkspaceLoadingSkeleton /> : <div className="workspace-table-scroll"><table className="workspace-table sample-list-table"><thead><tr><th>№</th><th>Харилцагч</th><th>Бүртгэл №</th><th>Огноо</th><th>Металл</th><th>Гулдмай</th><th>Химичдийн явц</th><th>Хуваарилсан огноо</th><th>Дууссан огноо</th><th>Төлөв</th></tr></thead><tbody>{pageBatches.map((batch, index) => <tr key={batch.id} className="manager-sample-row" tabIndex={0} onClick={() => setSelectedBatch(batch.id)} onKeyDown={(event) => {
+{loading ? <WorkspaceLoadingSkeleton /> : <div className="workspace-table-scroll sample-list-scroll"><table className="workspace-table sample-list-table"><thead><tr><th>№</th><th>Харилцагч</th><th>Бүртгэл №</th><th>Огноо</th><th>Металл</th><th>Гулдмай</th><th>Химичдийн явц</th><th>Төлөв</th></tr></thead><tbody>{pageBatches.map((batch, index) => <tr key={batch.id} className="manager-sample-row" tabIndex={0} onClick={() => setSelectedBatch(batch.id)} onKeyDown={(event) => {
   if (event.key !== "Enter" && event.key !== " ") return;
   event.preventDefault(); setSelectedBatch(batch.id);
 }}>
   <td>{offset + index + 1}</td><td className="sample-customer-name" title={batch.customerName}><span>{batch.customerName}</span></td><td>{batch.registrationNo}</td><td>{workflowDate(batch.receivedAt, false)}</td><td>{batch.metal === "gold" ? "Алт" : "Мөнгө"}</td><td>{batch.samples.length}</td>
-  <td><BatchChemistAssignment samples={batch.samples} onSaved={refresh} /></td><td className="sample-workflow-date">{batch.assignedAt ? <time dateTime={batch.assignedAt}>{workflowDate(batch.assignedAt)}</time> : "-"}</td><td className="sample-workflow-date">{batch.completedAt ? <time dateTime={batch.completedAt}>{workflowDate(batch.completedAt)}</time> : "-"}</td><td><StatusBadge status={batch.status} /></td></tr>)}</tbody></table>{filteredBatches.length === 0 && <p>Дээж олдсонгүй.</p>}</div>}
+  <td><BatchChemistAssignment samples={batch.samples} onSaved={refresh} /></td><td><StatusBadge status={batch.status} /></td></tr>)}</tbody></table>{filteredBatches.length === 0 && <p>Дээж олдсонгүй.</p>}</div>}
     {!loading && filteredBatches.length > 0 && <nav className="sample-pagination" aria-label="Хуудаслалт">
       <span>{offset + 1}–{Math.min(offset + 25, filteredBatches.length)} / {filteredBatches.length}</span>
       <button type="button" className="secondary-button" aria-label="Өмнөх хуудас" title="Өмнөх хуудас" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}><ChevronLeft size={20} aria-hidden="true" /></button>
@@ -190,7 +191,7 @@ export function SampleWorkspace({ manager = false, centerType }: { manager?: boo
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const style = status === "approved" ? "active" : status === "submitted" ? "warning" : "neutral";
+  const style = status === "approved" || status === "esign_approved" ? "active" : status === "submitted" ? "warning" : "neutral";
   return <span className={`status-badge status-${style}`}>{statusLabels[status] ?? status}</span>;
 }
 
@@ -234,6 +235,7 @@ function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded 
   const [saving, setSaving] = useState(false);
   const signingRef = useRef(false);
   const [error, setError] = useState("");
+  const [toastError, setToastError] = useState("");
   const [errorSecondsRemaining, setErrorSecondsRemaining] = useState(0);
   const [returningForCorrection, setReturningForCorrection] = useState(false);
   const [returnNote, setReturnNote] = useState("");
@@ -250,6 +252,7 @@ function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded 
   }, [reexamination]);
   const [weightRowCount, setWeightRowCount] = useState(Math.max(4, examination?.weightEntries.length ?? 0));
   const [submitted, setSubmitted] = useState(sample.status === "submitted");
+  const displayedStatus = sample.certificateSignatureStatus === "signed" || sample.certificateSignatureStatus === "cryptographically_verified" ? "esign_approved" : submitted ? "submitted" : sample.status;
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [substituteChoices, setSubstituteChoices] = useState<{ id: string; fullName: string }[] | null>(null);
   const [substituteChemist, setSubstituteChemist] = useState("");
@@ -265,6 +268,11 @@ function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded 
     const timeout = window.setTimeout(() => { setError(""); setErrorSecondsRemaining(0); }, 5_000);
     return () => { window.clearInterval(interval); window.clearTimeout(timeout); };
   }, [error]);
+  useEffect(() => {
+    if (!toastError) return;
+    const timeout = window.setTimeout(() => setToastError(""), 5_000);
+    return () => window.clearTimeout(timeout);
+  }, [toastError]);
   const updateTotals = useCallback(() => {
     setTotals(["received", "output"].map((prefix) => Array.from(formRef.current?.querySelectorAll<HTMLInputElement>(`input[name^="${prefix}-"]`) ?? [])
       .reduce((sum, input) => sum + (Number.isFinite(input.valueAsNumber) ? input.valueAsNumber : 0), 0)));
@@ -347,7 +355,7 @@ function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded 
   async function signCertificateWithEsign() {
     if (!sample.batchId || signingRef.current) return;
     signingRef.current = true;
-    setSaving(true); setError("");
+    setSaving(true); setError(""); setToastError("");
     try {
       if (!sample.certificateNo) {
         await api(`/api/v1/bullion/batches/${sample.batchId}/finalize`, { method: "POST", body: JSON.stringify({}) });
@@ -356,7 +364,7 @@ function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded 
       const response = await signHashWithEsign(payload.documentHash);
       await api(`/api/v1/bullion/batches/${sample.batchId}/signature-evidence`, { method: "POST", body: JSON.stringify({ providerResponse: response }) });
       onSaved();
-    } catch (error) { setError((error as Error).message); } finally { signingRef.current = false; setSaving(false); }
+    } catch (error) { setToastError((error as Error).message); } finally { signingRef.current = false; setSaving(false); }
   }
   async function printArchiveReport() {
     if (!sample.batchId) return;
@@ -462,11 +470,12 @@ function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded 
     {substituteChoices && <SubstituteChemistDialog chemists={substituteChoices} value={substituteChemist} saving={saving} onChange={setSubstituteChemist} onClose={() => { if (!saving) { setSubstituteChoices(null); setSubstituteChemist(""); } }} onConfirm={() => void substitute(substituteChemist)} />}
   </>;
   const feedback = error && <p className="login-error examination-feedback" role="alert"><span>{error}</span><time aria-label={`Алдаа ${errorSecondsRemaining} секундын дараа хаагдана`}>Автоматаар хаагдана: {errorSecondsRemaining}с</time></p>;
+  const toast = toastError && <div className="workspace-toast workspace-toast-error" role="alert" aria-live="assertive"><span>{toastError}</span><button type="button" aria-label="Мэдэгдэл хаах" title="Хаах" onClick={() => setToastError("")}><X size={17} aria-hidden="true" /></button></div>;
   const returnDialog = returningForCorrection && <ReturnForCorrectionDialog note={returnNote} saving={saving} onChange={setReturnNote} onClose={() => { if (!saving) { setReturningForCorrection(false); setReturnNote(""); } }} onConfirm={() => void returnForCorrection()} />;
-  if (embedded) return <><section className="chemist-examination">{content}</section>{feedback}{returnDialog}</>;
-  return <WorkspaceDialog size="examination" title={sample.metal === "gold" ? "Алтан гулдмайн шинжилгээ" : "Мөнгөн гулдмайн шинжилгээ"}
-    titleBadge={<span className={`examination-status examination-status-${submitted ? "submitted" : sample.status}`}>{statusLabels[submitted ? "submitted" : sample.status] ?? sample.status}</span>}
-    onClose={() => { if (!saving) onClose(); }}>{content}{feedback}{returnDialog}</WorkspaceDialog>;
+  if (embedded) return <><section className="chemist-examination">{content}</section>{feedback}{returnDialog}{toast}</>;
+  return <><WorkspaceDialog size="examination" title={sample.metal === "gold" ? "Алтан гулдмайн шинжилгээ" : "Мөнгөн гулдмайн шинжилгээ"}
+    titleBadge={<span className={`examination-status examination-status-${displayedStatus}`}>{statusLabels[displayedStatus] ?? displayedStatus}</span>}
+    onClose={() => { if (!saving) onClose(); }}>{content}{feedback}{returnDialog}</WorkspaceDialog>{toast}</>;
 }
 
 function ReturnForCorrectionDialog({ note, saving, onChange, onClose, onConfirm }: { note: string; saving: boolean; onChange(value: string): void; onClose(): void; onConfirm(): void }) {
