@@ -113,6 +113,13 @@
       "when": 1789560000000,
       "tag": "0015_bullion_examination_return_notes",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1789610400000,
+      "tag": "0016_daily_chemist_assignments",
+      "breakpoints": true
     }
   ]
 }

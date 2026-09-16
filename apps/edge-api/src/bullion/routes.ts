@@ -30,6 +30,7 @@ let nextMemoryExaminationNumber = 1;
 const batchOwners = new Map<string, string>();
 const memoryExaminations = new Map<string, { revisionNo: number; input: SubmitBullionExaminationInput; submittedAt: string | null; returnedByName?: string | null; returnedAt?: string | null; returnNote?: string | null }>();
 const memorySubstitutions = new Map<string, { byName: string; transferredAt: string; recipientId: string }>();
+const memoryDailyChemistAssignments = new Map<string, { goldChemistId: string | null; silverChemistId: string | null; vacationChemistIds: string[] }>();
 const visibleBatches = (user: AuthenticatedUser) => inMemoryBatches.filter((batch) => user.role === "system_admin" || batchOwners.get(batch.id) === user.organizationId);
 
 export function getMemoryReport(user: AuthenticatedUser, from: string, to: string) {
@@ -563,6 +564,20 @@ async function assignInMemory(batch: BullionIntakeBatchRecord, user: Authenticat
   }
 }
 
+async function applyDailyChemistAssignmentInMemory(batch: BullionIntakeBatchRecord, user: AuthenticatedUser, env: EdgeApiEnv) {
+  const assignment = memoryDailyChemistAssignments.get(dailyChemistKey(user.organizationId, mongoliaDate(batch.receivedAt || new Date())));
+  const chemistId = batch.metal === "gold" ? assignment?.goldChemistId : assignment?.silverChemistId;
+  if (!chemistId || assignment?.vacationChemistIds.includes(chemistId)) return;
+  const staff = await (await getAuthStore(env))?.listStaff(user) ?? [];
+  const chemist = staff.find((person) => person.id === chemistId && person.organizationId === user.organizationId && person.role === "chemist" && person.status === "active");
+  if (!chemist) return;
+  for (const item of batch.items.filter((item) => !item.assignedChemistId)) {
+    item.assignedChemistId = chemist.id;
+    item.assignedChemistName = chemist.fullName;
+    item.assignedAt = new Date().toISOString();
+  }
+}
+
 function customerSequenceQuery(customerId: string, user: AuthenticatedUser) {
   return sql`SELECT c.id, c.display_name AS "displayName", c.assay_center_id AS "organizationId", ''::text AS prefix,
       bullion.value AS "nextSequence", lpad(bullion.value::text, GREATEST(4, length(bullion.value::text)), '0') AS "nextNumber",
@@ -609,6 +624,78 @@ bullionRoutes.get("/intakes/next-number", async (c) => {
   return c.json({ ok: true, nextNumber: customer.nextNumber, prefix: customer.prefix });
 });
 
+bullionRoutes.get("/intakes/daily-chemist-assignment", async (c) => {
+  const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
+  if (!user) return c.json({ ok: false }, 401);
+  if (!isCenterManager(user.role)) return c.json({ ok: false }, 403);
+  const date = text(c.req.query("date")) || localDate();
+  if (!isIsoDate(date)) return c.json({ ok: false, message: "Огноог YYYY-MM-DD хэлбэрээр оруулна уу." }, 400);
+  if (!c.env.DATABASE_URL) {
+    const staff = (await (await getAuthStore(c.env))?.listStaff(user) ?? []).filter((person) => person.organizationId === user.organizationId && person.role === "chemist");
+    const assignment = memoryDailyChemistAssignments.get(dailyChemistKey(user.organizationId, date));
+    return c.json({ ok: true, data: { date, goldChemistId: assignment?.goldChemistId ?? null, silverChemistId: assignment?.silverChemistId ?? null,
+      chemists: staff.map((person) => ({ id: person.id, fullName: person.fullName, status: person.status, onVacation: assignment?.vacationChemistIds.includes(person.id) ?? false })) } });
+  }
+  const db = createDatabase(c.env.DATABASE_URL);
+  const [chemists, assignments] = await Promise.all([
+    db.execute<{ id: string; fullName: string; status: string; onVacation: boolean }>(sql`
+      SELECT u.id, u.full_name AS "fullName", u.status,
+        COALESCE(availability.is_on_vacation, false) AS "onVacation"
+      FROM users u LEFT JOIN chemist_daily_availability availability ON availability.organization_id = u.organization_id
+        AND availability.chemist_id = u.id AND availability.assignment_date = ${date}::date
+      WHERE u.organization_id = ${user.organizationId}::uuid AND u.role = 'chemist' ORDER BY u.full_name, u.id`),
+    db.execute<{ metal: "gold" | "silver"; chemistId: string }>(sql`
+      SELECT metal, chemist_id AS "chemistId" FROM bullion_daily_chemist_assignments
+      WHERE organization_id = ${user.organizationId}::uuid AND assignment_date = ${date}::date`),
+  ]);
+  const selected = readRows(assignments);
+  return c.json({ ok: true, data: { date,
+    goldChemistId: selected.find((assignment) => assignment.metal === "gold")?.chemistId ?? null,
+    silverChemistId: selected.find((assignment) => assignment.metal === "silver")?.chemistId ?? null,
+    chemists: readRows(chemists),
+  } });
+});
+
+bullionRoutes.put("/intakes/daily-chemist-assignment", async (c) => {
+  const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
+  if (!user) return c.json({ ok: false }, 401);
+  if (!isCenterManager(user.role)) return c.json({ ok: false }, 403);
+  const body = object(await c.req.json().catch(() => null));
+  const date = text(body.date) || localDate();
+  const goldChemistId = body.goldChemistId === null ? null : text(body.goldChemistId);
+  const silverChemistId = body.silverChemistId === null ? null : text(body.silverChemistId);
+  const vacationChemistIds = Array.isArray(body.vacationChemistIds) ? [...new Set(body.vacationChemistIds.map(text).filter(isUuid))] : [];
+  if (!isIsoDate(date) || !(goldChemistId === null || isUuid(goldChemistId)) || !(silverChemistId === null || isUuid(silverChemistId))
+    || Object.keys(body).some((key) => !["date", "goldChemistId", "silverChemistId", "vacationChemistIds"].includes(key))) return c.json({ ok: false }, 400);
+  const selectedIds = [goldChemistId, silverChemistId].filter((value): value is string => value !== null);
+  if (selectedIds.some((id) => vacationChemistIds.includes(id))) return c.json({ ok: false, message: "Амралттай химичийг өдөр тутмын хуваарьт сонгох боломжгүй." }, 400);
+  if (!c.env.DATABASE_URL) {
+    const staff = await (await getAuthStore(c.env))?.listStaff(user) ?? [];
+    const validIds = new Set(staff.filter((person) => person.organizationId === user.organizationId && person.role === "chemist" && person.status === "active").map((person) => person.id));
+    if ([...selectedIds, ...vacationChemistIds].some((id) => !validIds.has(id))) return c.json({ ok: false, message: "Сонгосон химич идэвхтэй биш байна." }, 400);
+    memoryDailyChemistAssignments.set(dailyChemistKey(user.organizationId, date), { goldChemistId, silverChemistId, vacationChemistIds });
+    return c.json({ ok: true });
+  }
+  const db = createDatabase(c.env.DATABASE_URL);
+  const activeChemists = readRows(await db.execute<{ id: string }>(sql`SELECT id FROM users WHERE organization_id = ${user.organizationId}::uuid AND role = 'chemist' AND status = 'active'`));
+  const activeIds = new Set(activeChemists.map((chemist) => chemist.id));
+  if ([...selectedIds, ...vacationChemistIds].some((id) => !activeIds.has(id))) return c.json({ ok: false, message: "Сонгосон химич идэвхтэй биш байна." }, 400);
+  const assignments = [{ metal: "gold", chemistId: goldChemistId }, { metal: "silver", chemistId: silverChemistId }].filter((assignment): assignment is { metal: "gold" | "silver"; chemistId: string } => assignment.chemistId !== null);
+  await db.batch([
+    db.execute(sql`SELECT pg_advisory_xact_lock(741206825)`),
+    db.execute(sql`DELETE FROM chemist_daily_availability WHERE organization_id = ${user.organizationId}::uuid AND assignment_date = ${date}::date`),
+    db.execute(sql`INSERT INTO chemist_daily_availability (organization_id, chemist_id, assignment_date, is_on_vacation, updated_by_user_id)
+      SELECT ${user.organizationId}::uuid, record."chemistId"::uuid, ${date}::date, true, ${user.id}::uuid
+      FROM jsonb_to_recordset(${JSON.stringify(vacationChemistIds.map((chemistId) => ({ chemistId })))}::jsonb) AS record("chemistId" text)`),
+    db.execute(sql`DELETE FROM bullion_daily_chemist_assignments WHERE organization_id = ${user.organizationId}::uuid AND assignment_date = ${date}::date`),
+    db.execute(sql`INSERT INTO bullion_daily_chemist_assignments (organization_id, assignment_date, metal, chemist_id, updated_by_user_id)
+      SELECT ${user.organizationId}::uuid, ${date}::date, record.metal::metal_type, record."chemistId"::uuid, ${user.id}::uuid
+      FROM jsonb_to_recordset(${JSON.stringify(assignments)}::jsonb) AS record(metal text, "chemistId" text)`),
+  ]);
+  await appendAuditLog(db, user, "bullion_daily_chemist_assignment.updated", "organizations", user.organizationId, { date, goldChemistId, silverChemistId, vacationChemistIds });
+  return c.json({ ok: true });
+});
+
 bullionRoutes.get("/intakes", async (c) => {
   const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
   if (!user) return c.json({ ok: false, message: "Нэвтрэх шаардлагатай." }, 401);
@@ -643,7 +730,10 @@ bullionRoutes.post("/intakes", async (c) => {
   if (record === "customer_not_found") {
     return c.json({ ok: false, message: "Сонгосон харилцагч олдсонгүй." }, 404);
   }
-  if (!c.env.DATABASE_URL) await assignInMemory(record, user, c.env);
+  if (!c.env.DATABASE_URL) {
+    await applyDailyChemistAssignmentInMemory(record, user, c.env);
+    await assignInMemory(record, user, c.env);
+  }
   return c.json({ ok: true, record }, 201);
 });
 
@@ -916,13 +1006,25 @@ async function createIntakeInDatabase(
       ), inserted_items AS (
         INSERT INTO bullion_intake_items (
           id, batch_id, sequence_no, bullion_no, gross_weight_before_grams,
-          gross_weight_after_grams, slag_weight_grams, sample_weight_milligrams
+          gross_weight_after_grams, slag_weight_grams, sample_weight_milligrams, assigned_chemist_id, assigned_at
         ) SELECT r.id, b.id, r."sequenceNo",
           lpad((c."nextSequence" + r."sequenceNo" - 1)::text, GREATEST(4, length((c."nextSequence" + r."sequenceNo" - 1)::text)), '0'),
-          r."grossWeightBeforeGrams", r."grossWeightAfterGrams", r."slagWeightGrams", r."sampleWeightMilligrams"
+          r."grossWeightBeforeGrams", r."grossWeightAfterGrams", r."slagWeightGrams", r."sampleWeightMilligrams",
+          daily_assignment.chemist_id, CASE WHEN daily_assignment.chemist_id IS NULL THEN NULL ELSE now() END
         FROM created b JOIN customer c ON c.id = b.customer_id CROSS JOIN jsonb_to_recordset(${JSON.stringify(items)}::jsonb)
           AS r(id uuid, "sequenceNo" int, "grossWeightBeforeGrams" numeric,
             "grossWeightAfterGrams" numeric, "slagWeightGrams" numeric, "sampleWeightMilligrams" numeric)
+        LEFT JOIN LATERAL (
+          SELECT assignment.chemist_id FROM bullion_daily_chemist_assignments assignment
+          JOIN users chemist ON chemist.id = assignment.chemist_id AND chemist.organization_id = b.assay_center_id
+            AND chemist.role = 'chemist' AND chemist.status = 'active'
+          LEFT JOIN chemist_daily_availability availability ON availability.organization_id = assignment.organization_id
+            AND availability.chemist_id = assignment.chemist_id AND availability.assignment_date = assignment.assignment_date
+          WHERE assignment.organization_id = b.assay_center_id AND assignment.metal = b.metal
+            AND assignment.assignment_date = (b.received_at AT TIME ZONE 'Asia/Ulaanbaatar')::date
+            AND NOT COALESCE(availability.is_on_vacation, false)
+          LIMIT 1
+        ) daily_assignment ON true
         ORDER BY r."sequenceNo"
         RETURNING id, examination_number, bullion_no
       ), audited AS (
@@ -1071,4 +1173,12 @@ function object(value: unknown): Record<string, unknown> { return value && typeo
 function text(value: unknown): string { return typeof value === "string" ? value.trim() : ""; }
 function number(value: unknown): number | undefined { const parsed = typeof value === "number" ? value : Number(value); return Number.isFinite(parsed) ? parsed : undefined; }
 function isUuid(value: string): boolean { return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value); }
+function isIsoDate(value: string): boolean { return /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(`${value}T00:00:00Z`)); }
+function mongoliaDate(value: string | Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ulaanbaatar", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date(value));
+  const part = (type: string) => parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+function localDate(): string { return mongoliaDate(); }
+function dailyChemistKey(organizationId: string, date: string): string { return `${organizationId}:${date}`; }
 type IntakeRow = Omit<BullionIntakeBatchRecord, "items" | "receivedAt" | "createdAt"> & { receivedAt: string | Date; createdAt: string | Date; items: BullionIntakeBatchRecord["items"]; };

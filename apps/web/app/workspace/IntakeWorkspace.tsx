@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { BadgeCheck, ClipboardCheck, FlaskConical, Minus, PackageCheck, Plus, RefreshCw } from "lucide-react";
+import { BadgeCheck, ClipboardCheck, FlaskConical, Minus, PackageCheck, Plus, RefreshCw, UsersRound } from "lucide-react";
 import type { AnonymousSample, BullionIntakeBatchRecord, CreateBullionIntakeInput } from "../../../../packages/shared/src";
 import { CreateCustomerDialog } from "../CustomerComponents";
 import { WorkspaceDialog } from "../OperationalWorkspace";
@@ -13,6 +13,8 @@ import { CustomerCombobox, type IntakeCustomerOption } from "./CustomerCombobox"
 
 type CustomerOption = IntakeCustomerOption;
 type WeightRow = { id?: string; bullionNo: string; before: string; after: string; slag: string; sample: string };
+type DailyChemist = { id: string; fullName: string; status: string; onVacation: boolean };
+type DailyChemistSchedule = { date: string; goldChemistId: string | null; silverChemistId: string | null; chemists: DailyChemist[] };
 const newRow = (): WeightRow => ({ bullionNo: "", before: "", after: "", slag: "", sample: "" });
 const optional = (value: string) => value.trim() === "" ? undefined : Number(value);
 const slagValue = (row: WeightRow) => row.before.trim() && row.after.trim()
@@ -38,6 +40,11 @@ function assignmentDate(value?: string) {
   const part = (type: string) => parts.find(item => item.type === type)?.value;
   return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}`;
 }
+function centerToday() {
+  const parts = intakeDateFormatter.formatToParts(new Date());
+  const part = (type: string) => parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
 
 export function IntakeWorkspace({ manager }: { manager: boolean }) {
   const [batches, setBatches] = useState<BullionIntakeBatchRecord[]>([]);
@@ -49,6 +56,7 @@ export function IntakeWorkspace({ manager }: { manager: boolean }) {
   const [tracking, setTracking] = useState<{ batch: BullionIntakeBatchRecord; samples: AnonymousSample[] } | null>(null);
   const [openingTrackingId, setOpeningTrackingId] = useState<string | null>(null);
   const [creatingCustomer, setCreatingCustomer] = useState(false);
+  const [dailyChemistScheduleOpen, setDailyChemistScheduleOpen] = useState(false);
   const refresh = useCallback(() => Promise.all([api<{ data: BullionIntakeBatchRecord[] }>("/api/v1/bullion/intakes"), api<{ data: CustomerOption[] }>("/api/v1/customers/lookup")])
     .then(([intakes, lookup]) => { setBatches(intakes.data); setCustomers(lookup.data); setError(""); })
     .catch((error) => setError(error.message)).finally(() => setLoading(false)), []);
@@ -79,6 +87,7 @@ export function IntakeWorkspace({ manager }: { manager: boolean }) {
     <div className="workspace-toolbar"><input aria-label="Бүртгэл хайх" placeholder="Дугаар, харилцагчаар хайх" value={search} onChange={(event) => setSearch(event.target.value)} />
       <button type="button" className="secondary-button intake-refresh-button" aria-label="Шинэчлэх" title="Шинэчлэх" disabled={loading} onClick={refresh}><RefreshCw size={20} aria-hidden="true" /></button>
       <button type="button" className="secondary-button" onClick={() => setCreatingCustomer(true)}>Харилцагч нэмэх</button>
+      {manager && <button type="button" className="secondary-button" onClick={() => setDailyChemistScheduleOpen(true)}><UsersRound size={18} aria-hidden="true" />Өнөөдрийн химич</button>}
       <button type="button" className="primary-button" onClick={() => setEditing("gold")}>Алтан гулдмай бүртгэх</button>
       <button type="button" className="primary-button" onClick={() => setEditing("silver")}>Мөнгөн гулдмай бүртгэх</button></div>
     {error && <p role="alert" className="login-error">{error}</p>}
@@ -86,7 +95,70 @@ export function IntakeWorkspace({ manager }: { manager: boolean }) {
     {editing && <IntakeDialog key={typeof editing === "string" ? editing : editing.id} batch={typeof editing === "string" ? null : editing} initialMetal={typeof editing === "string" ? editing : editing.metal} customers={customers} manager={manager} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); void refresh(); }} />}
     {tracking && <AssignmentDialog batch={tracking.batch} samples={tracking.samples} manager={manager} onClose={() => setTracking(null)} onSaved={refreshTracking} />}
     {creatingCustomer && <CreateCustomerDialog onClose={() => setCreatingCustomer(false)} onCreated={(customer) => { setCustomers((current) => [...current, { ...customer, registrationNumber: customer.registrationNumberMasked, province: customer.province ?? null, district: customer.district ?? null, origin: null }]); setCreatingCustomer(false); }} />}
+    {dailyChemistScheduleOpen && <DailyChemistScheduleDialog onClose={() => setDailyChemistScheduleOpen(false)} />}
   </section>;
+}
+
+function DailyChemistScheduleDialog({ onClose }: { onClose(): void }) {
+  const [date, setDate] = useState(centerToday);
+  const [schedule, setSchedule] = useState<DailyChemistSchedule | null>(null);
+  const [goldChemistId, setGoldChemistId] = useState<string | null>(null);
+  const [silverChemistId, setSilverChemistId] = useState<string | null>(null);
+  const [vacationChemistIds, setVacationChemistIds] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let active = true;
+    setLoading(true); setError("");
+    void api<{ data: DailyChemistSchedule }>(`/api/v1/bullion/intakes/daily-chemist-assignment?date=${encodeURIComponent(date)}`, { cache: "no-store" })
+      .then(({ data }) => {
+        if (!active) return;
+        setSchedule(data); setGoldChemistId(data.goldChemistId); setSilverChemistId(data.silverChemistId);
+        setVacationChemistIds(data.chemists.filter((chemist) => chemist.onVacation).map((chemist) => chemist.id));
+      })
+      .catch((error) => { if (active) setError((error as Error).message); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [date]);
+  const toggleVacation = (chemistId: string) => {
+    setVacationChemistIds((current) => {
+      const next = current.includes(chemistId) ? current.filter((id) => id !== chemistId) : [...current, chemistId];
+      if (next.includes(chemistId)) {
+        if (goldChemistId === chemistId) setGoldChemistId(null);
+        if (silverChemistId === chemistId) setSilverChemistId(null);
+      }
+      return next;
+    });
+  };
+  const eligible = schedule?.chemists.filter((chemist) => chemist.status === "active" && !vacationChemistIds.includes(chemist.id)) ?? [];
+  async function save() {
+    setSaving(true); setError("");
+    try {
+      await api("/api/v1/bullion/intakes/daily-chemist-assignment", { method: "PUT", body: JSON.stringify({ date, goldChemistId, silverChemistId, vacationChemistIds }) });
+      onClose();
+    } catch (error) { setError((error as Error).message); } finally { setSaving(false); }
+  }
+  return <WorkspaceDialog title="Өдрийн химичийн хуваарь" onClose={() => { if (!saving) onClose(); }}>
+    <div className="daily-chemist-schedule">
+      <label>Огноо<input type="date" value={date} disabled={saving} onChange={(event) => setDate(event.target.value)} /></label>
+      {loading ? <WorkspaceLoadingSkeleton rows={3} /> : <>
+        <div className="daily-chemist-defaults">
+          <label>Алтан гулдмай<select value={goldChemistId ?? ""} disabled={saving} onChange={(event) => setGoldChemistId(event.target.value || null)}><option value="">Химич сонгохгүй</option>{eligible.map((chemist) => <option key={chemist.id} value={chemist.id}>{chemist.fullName}</option>)}</select></label>
+          <label>Мөнгөн гулдмай<select value={silverChemistId ?? ""} disabled={saving} onChange={(event) => setSilverChemistId(event.target.value || null)}><option value="">Химич сонгохгүй</option>{eligible.map((chemist) => <option key={chemist.id} value={chemist.id}>{chemist.fullName}</option>)}</select></label>
+        </div>
+        <div className="daily-chemist-roster" role="list" aria-label="Химичдийн жагсаалт">
+          {schedule?.chemists.map((chemist) => <label key={chemist.id} className={vacationChemistIds.includes(chemist.id) ? "is-on-vacation" : ""}>
+            <span><strong>{chemist.fullName}</strong><small>{chemist.status === "active" ? "Идэвхтэй" : "Идэвхгүй"}</small></span>
+            <span className="daily-chemist-vacation"><input type="checkbox" checked={vacationChemistIds.includes(chemist.id)} disabled={saving || chemist.status !== "active"} onChange={() => toggleVacation(chemist.id)} />Амралттай</span>
+          </label>)}
+          {!schedule?.chemists.length && <p>Бүртгэлтэй химич алга байна.</p>}
+        </div>
+      </>}
+      {error && <p className="login-error" role="alert">{error}</p>}
+      <div className="workspace-dialog-actions"><button type="button" className="secondary-button" disabled={saving} onClick={onClose}>Болих</button><button type="button" className="primary-button" disabled={loading || saving} onClick={() => void save()}>{saving ? "Хадгалж байна..." : "Хадгалах"}</button></div>
+    </div>
+  </WorkspaceDialog>;
 }
 
 function AssignmentDialog({ batch, samples, manager, onClose, onSaved }: {
