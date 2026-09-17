@@ -60,7 +60,8 @@ export async function issueCertificate(db: AppDatabase, user: AuthenticatedUser,
         SELECT c.* FROM bullion_certificates c JOIN batch b ON b.id = c.batch_id
       ), results AS MATERIALIZED (
         SELECT i.sequence_no, i.sample_weight_milligrams > 0 AND i.gross_weight_after_grams IS NOT NULL
-          AND e.status = 'approved' AND e.gold_result IS NOT NULL AND e.silver_result IS NOT NULL
+          AND e.status = 'approved'
+          AND ((b.metal = 'gold' AND e.gold_result IS NOT NULL) OR (b.metal = 'silver' AND e.silver_result IS NOT NULL))
           AND e.measurement_entries->1->>'reading' IS NOT NULL
           AND e.measurement_entries->2->>'reading' IS NOT NULL
           AND e.measurement_entries->3->>'reading' IS NOT NULL AS ready,
