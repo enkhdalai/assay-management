@@ -1,12 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { Plus, Minus, ChevronLeft, ChevronRight, CircleCheck, X } from "lucide-react";
+import { Plus, Minus, ChevronLeft, ChevronRight, CalendarDays, CircleCheck, X } from "lucide-react";
 import type { AnonymousSample, SubmitBullionExaminationInput } from "../../../../packages/shared/src/bullion-types";
 import { WorkspaceDialog } from "../OperationalWorkspace";
 import { api } from "./api";
 import { printExamination, type ExaminationPrintData } from "./printExamination";
-import { calculateBullion, BULLION_CALCULATION_VERSION } from "../../../../packages/shared/src/bullion-calculation";
+import { calculateBullion, calculateSilverBullion, BULLION_CALCULATION_VERSION, BULLION_SILVER_CALCULATION_VERSION } from "../../../../packages/shared/src/bullion-calculation";
 import { WorkspaceLoadingSkeleton } from "./WorkspaceLoadingSkeleton";
 import { ChemistPicker } from "./ChemistPicker";
 
@@ -22,6 +22,15 @@ type ManagerBatch = {
   batchProgress: NonNullable<AnonymousSample["batchProgress"]>;
   assignedAt: string | null;
   completedAt: string | null;
+};
+type ExaminationCalculation = {
+  errors: string[];
+  weightEntries: SubmitBullionExaminationInput["weightEntries"];
+  goldResult?: number;
+  silverResult?: number;
+  remainingMilligrams?: number;
+  lossMilligrams?: number;
+  returnedMilligrams?: number;
 };
 const examinationNumber = (value: string) => value.padStart(4, "0");
 function bullionDisplayNumber(value?: string | null, fallback = "-") {
@@ -39,6 +48,7 @@ function batchStatus(samples: AnonymousSample[]) {
   return "pending";
 }
 const workflowDateFormatter = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Ulaanbaatar", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+const mongoliaDateFormatter = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ulaanbaatar", year: "numeric", month: "2-digit", day: "2-digit" });
 const utcDateFormatter = new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 function workflowDate(value?: string | null, includeTime = true) {
   if (!value || !Number.isFinite(Date.parse(value))) return "-";
@@ -46,6 +56,11 @@ function workflowDate(value?: string | null, includeTime = true) {
   const part = (type: string) => parts.find(part => part.type === type)?.value;
   const date = `${part("year")}-${part("month")}-${part("day")}`;
   return includeTime ? `${date} ${part("hour")}:${part("minute")}` : date;
+}
+function todayInMongolia() {
+  const parts = mongoliaDateFormatter.formatToParts(new Date());
+  const part = (type: string) => parts.find(item => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
 }
 function approvalDate(value?: string | null) {
   if (!value) return "-";
@@ -113,6 +128,22 @@ export function SampleWorkspace({ manager = false, centerType }: { manager?: boo
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState("all");
+  const [historyDate, setHistoryDate] = useState(todayInMongolia);
+  const [historyMode, setHistoryMode] = useState(false);
+  const [historySamples, setHistorySamples] = useState<AnonymousSample[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyDates, setHistoryDates] = useState<string[]>([]);
+  const [historyRevision, setHistoryRevision] = useState(0);
+  const historyAvailable = !manager && ["private_assay_center", "government_assay_center"].includes(centerType ?? "");
+  const loadHistoryDates = useCallback(async () => {
+    if (!historyAvailable) return;
+    try {
+      const { data } = await api<{ data: string[] }>("/api/v1/bullion/samples/history/dates", { cache: "no-store" });
+      setHistoryDates(data);
+    } catch (requestError) {
+      setError((requestError as Error).message);
+    }
+  }, [historyAvailable]);
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
@@ -128,6 +159,24 @@ export function SampleWorkspace({ manager = false, centerType }: { manager?: boo
     }
   }, [manager]);
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { void loadHistoryDates(); }, [loadHistoryDates]);
+  useEffect(() => {
+    if (!historyAvailable || !historyDate) { setHistorySamples([]); return; }
+    let cancelled = false;
+    setHistoryLoading(true); setError("");
+    void api<{ data: AnonymousSample[] }>(`/api/v1/bullion/samples/history?date=${encodeURIComponent(historyDate)}`, { cache: "no-store" })
+      .then(({ data }) => {
+        if (cancelled) return;
+        setHistorySamples(data);
+        setSelected((current) => {
+          const updated = current && data.find((sample) => sample.id === current.id && sample.revisionNo === current.revisionNo);
+          return updated ?? (historyMode || !current ? data[0] ?? null : current);
+        });
+      })
+      .catch((requestError: Error) => { if (!cancelled) setError(requestError.message); })
+      .finally(() => { if (!cancelled) setHistoryLoading(false); });
+    return () => { cancelled = true; };
+  }, [historyAvailable, historyDate, historyMode, historyRevision]);
   const grouped = new Map<string, AnonymousSample[]>();
   if (manager) samples.forEach((sample) => {
     if (!sample.batchId) return;
@@ -156,20 +205,30 @@ export function SampleWorkspace({ manager = false, centerType }: { manager?: boo
     const newRequestOrder = Number(right.status === "pending") - Number(left.status === "pending");
     return newRequestOrder || Date.parse(right.receivedAt) - Date.parse(left.receivedAt) || Number(right.analysisNo) - Number(left.analysisNo);
   });
+  const visibleChemistSamples = (historyMode
+    ? historySamples
+    : [...chemistSamples, ...historySamples.filter((historySample) => !chemistSamples.some((sample) => sample.id === historySample.id && sample.revisionNo === historySample.revisionNo))]
+  ).sort((left, right) => {
+    const newRequestOrder = Number(right.status === "pending") - Number(left.status === "pending");
+    return newRequestOrder || Date.parse(right.receivedAt) - Date.parse(left.receivedAt) || Number(right.analysisNo) - Number(left.analysisNo);
+  });
   if (!manager) return <section className="chemist-workstation">
     <aside className="chemist-sample-list" aria-label="Илгээгдсэн шинжилгээнүүд">
+      {historyAvailable && <label className="chemist-history-date">Огноо
+        <ChemistHistoryDatePicker value={historyDate} availableDates={historyDates} onChange={(date) => { setHistoryDate(date); setHistoryMode(date !== todayInMongolia()); }} />
+      </label>}
       <h2>Шинжилгээ №</h2>
-      {loading ? <WorkspaceLoadingSkeleton rows={4} /> : <div className="chemist-sample-options" role="listbox" aria-label="Шинжилгээ сонгох">
-        {chemistSamples.map((sample, index) => <button key={sample.id} type="button" role="option" aria-selected={selected?.id === sample.id} className="chemist-sample-option" onClick={() => setSelected(sample)}>
+      {loading || historyLoading ? <WorkspaceLoadingSkeleton rows={4} /> : <div className="chemist-sample-options" role="listbox" aria-label="Шинжилгээ сонгох">
+        {visibleChemistSamples.map((sample, index) => <button key={`${sample.id}:${sample.revisionNo}`} type="button" role="option" aria-selected={selected?.id === sample.id && selected?.revisionNo === sample.revisionNo} className="chemist-sample-option" onClick={() => setSelected(sample)}>
           <span>{index + 1}</span><strong>{sample.status === "pending" && <i className="new-sample-dot" aria-label="Шинэ хүсэлт" title="Шинэ хүсэлт" />}{examinationNumber(sample.analysisNo)}</strong>
         </button>)}
-        {!samples.length && <p>Илгээгдсэн дээж алга байна.</p>}
+        {!visibleChemistSamples.length && <p>{historyMode ? "Сонгосон өдөр шинжилгээ олдсонгүй." : "Илгээгдсэн дээж алга байна."}</p>}
       </div>}
     </aside>
     <div className="chemist-form-panel">
       {error && <p className="login-error" role="alert">{error}</p>}
-      {selected && <SampleDialog key={selected.id} embedded manager={false} centerType={centerType} sample={selected} onClose={() => undefined} onSaved={() => { void refresh(); }} />}
-      {!loading && !selected && !error && <p>Шинжилгээ сонгоно уу.</p>}
+      {selected && <SampleDialog key={`${selected.id}:${selected.revisionNo}`} embedded manager={false} centerType={centerType} sample={selected} onClose={() => undefined} onSaved={() => { void refresh(); void loadHistoryDates(); setHistoryRevision((revision) => revision + 1); }} />}
+      {!loading && !historyLoading && !selected && !error && <p>Шинжилгээ сонгоно уу.</p>}
     </div>
   </section>;
   return <section className="workspace-section"><div className="workspace-toolbar"><input aria-label="Дээж хайх" placeholder="Харилцагч, бүртгэл эсвэл шинжилгээний дугаараар хайх" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} />{manager && <select aria-label="Төлөв" value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }}><option value="all">Бүх төлөв</option>{Object.entries(statusLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>}<button className="secondary-button" disabled={loading} onClick={() => { void refresh(); }} type="button">{loading ? "Шинэчилж байна..." : "Шинэчлэх"}</button></div>
@@ -190,6 +249,52 @@ export function SampleWorkspace({ manager = false, centerType }: { manager?: boo
   </section>;
 }
 
+function ChemistHistoryDatePicker({ value, availableDates, onChange }: { value: string; availableDates: string[]; onChange(value: string): void }) {
+  const available = new Set(availableDates);
+  const initial = value ? new Date(`${value}T12:00:00`) : new Date();
+  const [open, setOpen] = useState(false);
+  const [month, setMonth] = useState(() => new Date(initial.getFullYear(), initial.getMonth(), 1));
+  const pickerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (!pickerRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => { document.removeEventListener("pointerdown", closeOnOutsideClick); document.removeEventListener("keydown", closeOnEscape); };
+  }, [open]);
+  const monthLabel = new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(month);
+  const firstDay = (month.getDay() + 6) % 7;
+  const days = Array.from({ length: firstDay + new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate() }, (_, index) => index < firstDay ? null : index - firstDay + 1);
+  const displayValue = value ? value.replaceAll("-", ".") : "Огноо сонгох";
+  const selectDate = (day: number) => {
+    const date = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    if (!available.has(date) && date !== todayInMongolia()) return;
+    onChange(date); setOpen(false);
+  };
+  return <div ref={pickerRef} className="chemist-history-picker">
+    <button type="button" className="chemist-history-picker-trigger" aria-expanded={open} aria-haspopup="dialog" onClick={() => setOpen(!open)}>
+      <span>{displayValue}</span><CalendarDays size={18} aria-hidden="true" />
+    </button>
+    {open && <div className="chemist-history-calendar" role="dialog" aria-label="Шинжилгээний огноо сонгох">
+      <div className="chemist-history-calendar-header"><span>{monthLabel}</span><div>
+        <button type="button" aria-label="Өмнөх сар" title="Өмнөх сар" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}><ChevronLeft size={18} aria-hidden="true" /></button>
+        <button type="button" aria-label="Дараах сар" title="Дараах сар" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}><ChevronRight size={18} aria-hidden="true" /></button>
+      </div></div>
+      <div className="chemist-history-calendar-weekdays">{["Д", "М", "Л", "П", "Б", "Б", "Н"].map((day, index) => <span key={`${day}-${index}`}>{day}</span>)}</div>
+      <div className="chemist-history-calendar-days">{days.map((day, index) => {
+        if (!day) return <span key={`blank-${index}`} />;
+        const date = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+        const enabled = available.has(date) || date === todayInMongolia();
+        return <button key={date} type="button" disabled={!enabled} aria-current={value === date ? "date" : undefined} onClick={() => selectDate(day)}>{day}</button>;
+      })}</div>
+      {!availableDates.length && <p>Шинжилгээний түүх алга байна.</p>}
+    </div>}
+  </div>;
+}
+
 function StatusBadge({ status }: { status: string }) {
   const style = status === "approved" || status === "esign_approved" ? "active" : status === "submitted" ? "warning" : "neutral";
   return <span className={`status-badge status-${style}`}>{statusLabels[status] ?? status}</span>;
@@ -208,7 +313,12 @@ function BatchChemistAssignment({ samples, onSaved }: { samples: AnonymousSample
 
 function ApprovalNotice({ sample }: { sample: AnonymousSample }) {
   if (sample.status !== "approved" || !sample.approvedByName || !sample.approvedAt) return null;
-  return <span className="approval-notice">Баталгаажуулсан: <strong>{sample.approvedByName}</strong><time dateTime={sample.approvedAt}>{approvalDate(sample.approvedAt)}</time></span>;
+  return <span className="approval-notice">Баталсан: <strong>{sample.approvedByName}</strong><time dateTime={sample.approvedAt}>{approvalDate(sample.approvedAt)}</time></span>;
+}
+
+function SubmissionNotice({ sample }: { sample: AnonymousSample }) {
+  if (sample.status !== "submitted" || !sample.assignedChemistName || !sample.completedAt) return null;
+  return <span className="submission-notice">Илгээсэн: <strong>{sample.assignedChemistName}</strong><time dateTime={sample.completedAt}>{workflowDate(sample.completedAt)}</time></span>;
 }
 
 function BatchReviewDialog({ batch, centerType, onClose, onSaved }: { batch: ManagerBatch; centerType?: string; onClose(): void; onSaved(): void }) {
@@ -241,6 +351,7 @@ function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded 
   const [returnNote, setReturnNote] = useState("");
   const [batchReadyForFinalization, setBatchReadyForFinalization] = useState(Boolean(sample.batchReadyForFinalization));
   const examination = sample.examination;
+  const isSilver = sample.metal === "silver";
   const [reexamination, setReexamination] = useState(examination?.reexaminationRequested ?? false);
   const notesRef = useRef<HTMLInputElement>(null);
   const focusNotes = useRef(false);
@@ -257,6 +368,7 @@ function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded 
   const [substituteChoices, setSubstituteChoices] = useState<{ id: string; fullName: string }[] | null>(null);
   const [substituteChemist, setSubstituteChemist] = useState("");
   const formRef = useRef<HTMLFormElement>(null);
+  const formId = `bullion-examination-${sample.id}`;
   const [totals, setTotals] = useState([0, 0]);
   const [canCalculate, setCanCalculate] = useState(false);
   useEffect(() => {
@@ -293,14 +405,28 @@ function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded 
     setError("");
   }
   function weightInput() { updateTotals(); invalidateCalculation(); }
-  function readWeights(form: FormData) {
+  function readWeights(form: FormData): SubmitBullionExaminationInput["weightEntries"] {
     return Array.from({ length: weightRowCount }, (_, index) => ({
       receivedWeightGrams: Number(form.get(`received-${index}`)) / 1000,
-      outputWeightGrams: Number(form.get(`output-${index}`)) / 1000,
+      outputWeightGrams: Number(form.get(`output-${index}`)) / (isSilver ? 1 : 1000),
       calculation: String(form.get(`calculation-${index}`)) as "yes" | "no" | "addition",
     }));
   }
-  function calculate(form = new FormData(formRef.current!)) {
+  function calculate(form = new FormData(formRef.current!)): ExaminationCalculation {
+    if (isSilver) {
+      const result = calculateSilverBullion(readWeights(form), sample.sampleWeightMilligrams / 1000, {
+        method: form.get("silverMethod") === "rhodanometric" ? "rhodanometric" : "titrimetric",
+        titerMilligramsPerMilliliter: Number(form.get("silverTiter")),
+        blankVolumeMilliliters: undefined,
+      });
+      const values: Record<string, number | undefined> = { silverResult: result.silverResult };
+      result.weightEntries.forEach((entry, index) => { values[`silver-${index}`] = entry.silverAssay; });
+      for (const [name, value] of Object.entries(values)) {
+        const input = formRef.current?.elements.namedItem(name) as HTMLInputElement | null;
+        if (input) input.value = value == null || !Number.isFinite(value) ? "" : value.toFixed(2);
+      }
+      return result;
+    }
     const result = calculateBullion(readWeights(form), sample.sampleWeightMilligrams / 1000, sample.delta);
     const values: Record<string, number | undefined> = {
       goldResult: result.goldResult, silverResult: result.silverResult,
@@ -316,7 +442,7 @@ function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded 
   function checkCalculation() {
     if (!formRef.current?.reportValidity()) return;
     const result = calculate();
-    setError(result.errors.join(" ") || (result.silverResult == null ? "Мөнгөний сорьц бодох Нэмэлт мөрийг оруулна уу." : ""));
+    setError(result.errors.join(" ") || (!isSilver && result.silverResult == null ? "Мөнгөний сорьц бодох Нэмэлт мөрийг оруулна уу." : ""));
   }
   async function chooseSubstituteChemist() {
     if (!examination || hasUnsavedChanges) {
@@ -384,17 +510,23 @@ function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded 
     const form = new FormData(event.currentTarget);
     const status = sendingForApproval ? "submitted" : "draft";
     const calculated = editable ? calculate(form) : null;
-    if (sendingForApproval && calculated && (calculated.errors.length || calculated.goldResult == null || calculated.silverResult == null)) {
-      setError(calculated.errors.join(" ") || "Мөнгөний сорьц бодох Нэмэлт мөрийг оруулна уу."); return;
+    if (sendingForApproval && calculated && (calculated.errors.length || (isSilver ? calculated.silverResult == null : calculated.goldResult == null || calculated.silverResult == null))) {
+      setError(calculated.errors.join(" ") || (isSilver ? "Мөнгөний сорьцыг бодож чадсангүй." : "Мөнгөний сорьц бодох Нэмэлт мөрийг оруулна уу.")); return;
     }
     setSaving(true);
     const input: SubmitBullionExaminationInput = {
       bullionItemId: sample.id, examinationNo: sample.analysisNo, expectedRevision: sample.revisionNo,
-      calculationVersion: BULLION_CALCULATION_VERSION,
+      calculationVersion: isSilver ? BULLION_SILVER_CALCULATION_VERSION : BULLION_CALCULATION_VERSION,
       sampleWeightGrams: sample.sampleWeightMilligrams / 1000, delta: sample.delta, status,
       weightEntries: calculated?.weightEntries ?? readWeights(form),
-      measurementEntries: measurements.map((label, index) => ({ label, reading: index === 0 ? Number(form.get('measurement-0')) : calculated ? [0, calculated.remainingMilligrams, calculated.lossMilligrams, calculated.returnedMilligrams][index] : Number(form.get(`measurement-${index}`)) })),
-      goldResult: calculated?.goldResult, silverResult: calculated?.silverResult, notes: String(form.get("notes") || ""), reexaminationRequested: form.get("reexaminationRequested") === "on",
+      measurementEntries: isSilver
+        ? (calculated?.weightEntries ?? readWeights(form)).map((entry, index) => ({ label: `${index + 1}-р мөр`, reading: entry.outputWeightGrams, silverAssay: entry.silverAssay }))
+        : measurements.map((label, index) => ({ label, reading: index === 0 ? Number(form.get('measurement-0')) : calculated ? [0, calculated.remainingMilligrams ?? 0, calculated.lossMilligrams ?? 0, calculated.returnedMilligrams ?? 0][index] : Number(form.get(`measurement-${index}`)) })),
+      goldResult: isSilver ? undefined : calculated?.goldResult, silverResult: calculated?.silverResult,
+      silverMethod: isSilver ? (form.get("silverMethod") === "rhodanometric" ? "rhodanometric" : "titrimetric") : undefined,
+      silverTiterMilligramsPerMilliliter: isSilver ? Number(form.get("silverTiter")) : undefined,
+      silverBlankVolumeMilliliters: undefined,
+      notes: String(form.get("notes") || ""), reexaminationRequested: form.get("reexaminationRequested") === "on",
     };
     try {
       if (editable) { await api("/api/v1/bullion/examinations", { method: "POST", body: JSON.stringify(input) }); setHasUnsavedChanges(false); if (sendingForApproval) setSubmitted(true); }
@@ -403,31 +535,54 @@ function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded 
     catch (error) { setError((error as Error).message); } finally { setSaving(false); }
   }
   const content = <>
-    <dl className="examination-metadata">
-      <div><dt>Огноо</dt><dd>{workflowDate(sample.receivedAt, false)}</dd></div>
+    {isSilver ? <><div className={`silver-examination-header${manager ? " is-manager" : ""}`}>
+      {manager && <label>Огноо<input className="silver-readonly-field" readOnly disabled value={workflowDate(sample.receivedAt, false)} /></label>}
+      <label>Дээжийн жин /мг/<input className="silver-readonly-field" readOnly disabled value={sample.sampleWeightMilligrams} /></label>
+      {manager ? <div className="silver-method-used" aria-label="Шинжилгээний арга">
+        {examination?.silverMethod === "rhodanometric" ? "Роданометрийн арга" : "Титриметрийн арга"}
+      </div> : <div className="silver-method-choice" role="radiogroup" aria-label="Шинжилгээний арга">
+        {([['rhodanometric', 'Роданометрийн арга'], ['titrimetric', 'Титриметрийн арга']] as const).map(([value, label]) => <label key={value}>
+          <input form={formId} type="radio" name="silverMethod" value={value} disabled={!editable} defaultChecked={(examination?.silverMethod ?? 'titrimetric') === value} onChange={invalidateCalculation} />{label}
+        </label>)}
+      </div>}
+      <label className="silver-titer-field"><span>Титр</span><input form={formId} name="silverTiter" type="number" min="0" step="0.01" required disabled={!editable} defaultValue={Number(examination?.silverTiterMilligramsPerMilliliter ?? sample.silverTiter ?? 5555).toFixed(2)} onInput={invalidateCalculation} /></label>
+    </div>
+    </> : <dl className="examination-metadata">
+      {manager && <div><dt>Огноо</dt><dd>{workflowDate(sample.receivedAt, false)}</dd></div>}
       <div><dt>Дээжийн жин /мг/</dt><dd>{sample.sampleWeightMilligrams}</dd></div>
       <div><dt>{manager ? "Гулдмайн №" : "Шинжилгээний №"}</dt><dd>{manager ? bullionDisplayNumber(sample.bullionNo) : examinationNumber(sample.analysisNo)}</dd></div>
       <div><dt>Делта</dt><dd>{sample.delta}</dd></div>
-    </dl>
+    </dl>}
     {!manager && sample.returnNote && <aside className="examination-return-note" aria-label="Эрхлэгчийн засварын тэмдэглэл"><strong>Эрхлэгчийн засварын тэмдэглэл</strong><span>{sample.returnNote}</span>{sample.returnedByName && <small>{sample.returnedByName}{sample.returnedAt ? ` · ${workflowDate(sample.returnedAt)}` : ""}</small>}</aside>}
-    <form ref={formRef} className="workspace-form examination-form" autoComplete="off" onSubmit={submit}><fieldset disabled={saving}>
+    <form id={formId} ref={formRef} className="workspace-form examination-form" autoComplete="off" onSubmit={submit}><fieldset disabled={saving}>
       <div className="examination-scroll"><div className="examination-columns">
         <div><table className="examination-table examination-weights"><colgroup><col /><col className="calculation-column" /><col /></colgroup>
-          <thead><tr><th>Авсан жин /мг/</th><th>Бодолт</th><th>Гарсан жин /мг/</th></tr></thead>
+          {!isSilver && <thead><tr><th>Авсан жин /мг/</th><th>Бодолт</th><th>Гарсан жин /мг/</th></tr></thead>}
           <tbody>{Array.from({ length: weightRowCount }, (_, index) => <tr key={index}>
-            <td><input name={`received-${index}`} aria-label={`Авсан жин ${index + 1}`} type="number" disabled={!editable} min="0" step="0.0001" onInput={weightInput} onFocus={(event) => clearZero(event.currentTarget)} defaultValue={(examination?.weightEntries[index]?.receivedWeightGrams ?? 0) * 1000} /></td>
+            <td><input name={`received-${index}`} aria-label={`${isSilver ? "Дээжийн жин" : "Авсан жин"} ${index + 1}`} type="number" disabled={!editable} min="0" step="0.0001" onInput={weightInput} onFocus={(event) => clearZero(event.currentTarget)} defaultValue={(examination?.weightEntries[index]?.receivedWeightGrams ?? 0) * 1000} /></td>
             <td><div className="examination-calculation" role="group" aria-label={`Бодолт ${index + 1}`}>
               {([["yes", "Тийм"], ["no", "Үгүй"], ["addition", "Нэмэлт"]] as const).map(([value, label]) => <label key={value}>
                 <input type="radio" onChange={invalidateCalculation} disabled={!editable} name={`calculation-${index}`} value={value} defaultChecked={(examination?.weightEntries[index]?.calculation || "no") === value} />{label}
               </label>)}
             </div></td>
-            <td><input name={`output-${index}`} aria-label={`Гарсан жин ${index + 1}`} type="number" disabled={!editable} min="0" step="0.0001" onInput={weightInput} onFocus={(event) => clearZero(event.currentTarget)} defaultValue={(examination?.weightEntries[index]?.outputWeightGrams ?? 0) * 1000} /></td>
+            <td><input name={`output-${index}`} aria-label={`${isSilver ? "Титрийн эзлэхүүн" : "Гарсан жин"} ${index + 1}`} type="number" disabled={!editable} min="0" step="0.0001" onInput={weightInput} onFocus={(event) => clearZero(event.currentTarget)} defaultValue={(examination?.weightEntries[index]?.outputWeightGrams ?? 0) * (isSilver ? 1 : 1000)} /></td>
           </tr>)}</tbody>
           <tfoot>{editable && reexamination && <tr><td><div className="examination-row-controls"><button type="button" className="secondary-button examination-add-row" aria-label="Шинжилгээний мөр нэмэх" title="Шинжилгээний мөр нэмэх" onClick={() => { invalidateCalculation(); setWeightRowCount((count) => count + 1); }}><Plus size={20} aria-hidden="true" /></button><button type="button" className="secondary-button examination-add-row" aria-label="Сүүлийн мөр хасах" title="Сүүлийн мөр хасах" disabled={weightRowCount <= 4} onClick={() => { invalidateCalculation(); setWeightRowCount((count) => Math.max(4, count - 1)); }}><Minus size={20} aria-hidden="true" /></button></div></td><td colSpan={2} /></tr>}
           </tfoot>
         </table>
         </div>
-        <div className="examination-right"><table className="examination-table examination-measurements"><colgroup><col className="measurement-label-column" /><col /><col /></colgroup>
+        <div className={`examination-right${isSilver ? " silver-examination-right" : ""}`}>{isSilver ? <><div className="silver-derived-values">
+          <label>Дээжийн үлдэгдэл жин<input readOnly tabIndex={-1} aria-label="Дээжийн үлдэгдэл жин" value={Math.max(0, sample.sampleWeightMilligrams - totals[0]).toFixed(2)} /></label>
+          <label>Шинжилгээний хорогдол<input readOnly tabIndex={-1} aria-label="Шинжилгээний хорогдол" value={totals[0].toFixed(2)} /></label>
+          {(!manager || reexamination) && <label className="examination-recheck"><input type="checkbox" disabled={!editable} name="reexaminationRequested" checked={reexamination} onChange={(event) => {
+            setReexamination(event.target.checked);
+            setHasUnsavedChanges(true);
+            focusNotes.current = event.target.checked;
+            if (!event.target.checked) { invalidateCalculation(); setWeightRowCount(4); }
+          }} aria-controls="reexamination-description" /><span>Дахин шинжилгээ хийх</span></label>}
+        </div>
+        <div className="silver-assay-values">{Array.from({ length: weightRowCount }, (_, index) => <input key={index} name={`silver-${index}`} aria-label={`Мөнгөний сорьц ${index + 1}`} type="number" readOnly data-calculated disabled={!editable} min="0" max="1000" step="0.000001" defaultValue={examination?.weightEntries[index]?.silverAssay?.toFixed(2) ?? ""} />)}</div>
+        </> : <><table className="examination-table examination-measurements"><colgroup><col className="measurement-label-column" /><col /><col /></colgroup>
           <thead><tr><th aria-label="Хэмжилтийн нэр" /><th scope="col">Үзүүлэлт</th><th scope="col">Алтны сорьц ‰</th></tr></thead>
           <tbody>{Array.from({ length: weightRowCount }, (_, index) => <tr key={index}><th scope="row">{measurements[index]}</th>
             <td>{index < measurements.length && <input name={`measurement-${index}`} aria-label={measurements[index]} type="number" readOnly={index > 0} data-calculated={index > 0 ? true : undefined} disabled={!editable} min="0" step="0.0001" onInput={index === 0 ? invalidateCalculation : undefined} defaultValue={(index > 0 ? examination?.measurementEntries[index]?.reading?.toFixed(2) : examination?.measurementEntries[index]?.reading) ?? ""} />}</td>
@@ -437,18 +592,21 @@ function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded 
         <div className="examination-results"><h3>Сорьцын дүн</h3>
           <label>Алтны сорьц ‰<input name="goldResult" type="number" readOnly data-calculated disabled={!editable} min="0" max="1000" step="0.000001" defaultValue={examination?.goldResult?.toFixed(2) ?? ""} /></label>
           <label>Мөнгөний сорьц ‰<input name="silverResult" type="number" readOnly data-calculated disabled={!editable} min="0" max="1000" step="0.000001" defaultValue={examination?.silverResult?.toFixed(2) ?? ""} /></label>
+        </div></>}
         </div>
-        </div>
+        {isSilver && <div className="silver-result"><label className="examination-total">Сорьцын дүн:<input name="silverResult" aria-label="Мөнгөний сорьцын дүн" type="number" readOnly data-calculated disabled={!editable} min="0" max="1000" step="0.000001" defaultValue={examination?.silverResult?.toFixed(2) ?? ""} /></label>
+        </div>}
         <table className="examination-table examination-totals"><colgroup><col /><col className="calculation-column" /><col /></colgroup><tbody>
-          <tr><td><label className="examination-total">Дүн:<input readOnly tabIndex={-1} onMouseDown={(event) => event.preventDefault()} aria-label="Авсан жингийн дүн" value={totals[0].toFixed(4).replace(/0{1,2}$/, "")} /></label></td><td /><td><label className="examination-total">Дүн:<input readOnly tabIndex={-1} onMouseDown={(event) => event.preventDefault()} aria-label="Гарсан жингийн дүн" value={totals[1].toFixed(4).replace(/0{1,2}$/, "")} /></label></td></tr>
+          <tr><td><label className="examination-total">Дүн:<input readOnly tabIndex={-1} onMouseDown={(event) => event.preventDefault()} aria-label="Авсан жингийн дүн" value={totals[0].toFixed(4).replace(/0{1,2}$/, "")} /></label></td><td /><td><label className="examination-total">Дүн:<input readOnly tabIndex={-1} onMouseDown={(event) => event.preventDefault()} aria-label={isSilver ? "Титрийн эзлэхүүний дүн" : "Гарсан жингийн дүн"} value={totals[1].toFixed(4).replace(/0{1,2}$/, "")} /></label></td></tr>
         </tbody></table>
-        <div className="examination-footer-fields">
-          <label className="examination-recheck"><input type="checkbox" disabled={!editable} name="reexaminationRequested" checked={reexamination} onChange={(event) => {
+        <div className={`examination-footer-fields${isSilver ? " silver-footer-fields" : ""}`}>
+          {!isSilver && (!manager || reexamination) && <label className="examination-recheck"><input type="checkbox" disabled={!editable} name="reexaminationRequested" checked={reexamination} onChange={(event) => {
             setReexamination(event.target.checked);
             setHasUnsavedChanges(true);
             focusNotes.current = event.target.checked;
             if (!event.target.checked) { invalidateCalculation(); setWeightRowCount(4); }
           }} aria-controls="reexamination-description" /><span>Дахин шинжилгээ хийх</span></label>
+          }
           <div id="reexamination-description" className={`examination-description${reexamination ? " is-open" : ""}`} inert={!reexamination}>
             <div><input ref={notesRef} name="notes" aria-label="Тайлбар" placeholder="Тайлбар" maxLength={2000} disabled={!reexamination || !editable} onInput={() => setHasUnsavedChanges(true)} defaultValue={examination?.notes ?? ""} /></div>
           </div>
@@ -457,7 +615,8 @@ function SampleDialog({ sample, manager, centerType, onClose, onSaved, embedded 
       </fieldset>
       <div className="examination-actions">
         {!manager && sample.substitutedByName && sample.substitutedAt && <span className="substitute-notice">Шилжүүлсэн химич: <strong>{sample.substitutedByName}</strong> · <time dateTime={sample.substitutedAt}>{workflowDate(sample.substitutedAt)}</time></span>}
-        {manager ? <>{sample.status === "submitted" && <><button className="secondary-button" type="button" disabled={saving} onClick={() => setReturningForCorrection(true)}>Буцаах</button><button className="primary-button" type="button" disabled={saving} onClick={() => void approve()}>Батлах</button></>}{batchReadyForFinalization && !sample.certificateNo && <button className="primary-button" type="button" disabled={saving} onClick={() => void signCertificateWithEsign()}>eSign-аар эцсийн гэрчилгээ батлах</button>}{sample.certificateNo && <><span className="certificate-ready">Гэрчилгээ № {sample.certificateNo}</span>{sample.certificateSignatureStatus === "unsigned" && <button className="primary-button" type="button" disabled={saving} onClick={() => void signCertificateWithEsign()}>eSign-аар гэрчилгээ батлах</button>}{sample.certificateSignatureStatus === "signing" && <span className="certificate-ready">eSign шалгалт хүлээгдэж байна</span>}{sample.certificateSignatureStatus === "cryptographically_verified" && <span className="certificate-ready">RSA гарын үсэг шалгагдсан</span>}{sample.certificateSignatureStatus === "signed" && <span className="certificate-ready">Дижитал гарын үсэг баталгаажсан</span>}<button className="secondary-button" type="button" disabled={saving} onClick={() => void printArchiveReport()}>Архивын тайлан хэвлэх</button></>}</> : <>
+        <SubmissionNotice sample={sample} />
+        {manager ? <>{sample.status === "submitted" && <><button className="secondary-button" type="button" disabled={saving} onClick={() => setReturningForCorrection(true)}>Буцаах</button><button className="primary-button" type="button" disabled={saving} onClick={() => void approve()}>Батлах</button></>}{batchReadyForFinalization && !sample.certificateNo && <button className="primary-button" type="button" disabled={saving} onClick={() => void signCertificateWithEsign()}>eSign-аар эцсийн гэрчилгээ батлах</button>}{sample.certificateNo && <><span className="certificate-ready">Гэрчилгээ № {sample.certificateNo}</span>{sample.certificateSignatureStatus === "unsigned" && <button className="primary-button" type="button" disabled={saving} onClick={() => void signCertificateWithEsign()}>eSign-аар гэрчилгээ батлах</button>}{(sample.certificateSignatureStatus === "signed" || sample.certificateSignatureStatus === "cryptographically_verified") && <span className="certificate-ready">eSign баталсан</span>}<button className="secondary-button" type="button" disabled={saving} onClick={() => void printArchiveReport()}>Архивын тайлан хэвлэх</button></>}</> : <>
         <button className="secondary-button" type="button" disabled={saving || !editable || !canCalculate} onClick={checkCalculation}>Бодолт</button>
         <button className="secondary-button" type="button" disabled={saving || !editable || !canCalculate} onClick={checkCalculation}>Шалгах</button>
         <button className="primary-button" type="submit" value="draft" disabled={saving || !editable}>Хадгалах</button>

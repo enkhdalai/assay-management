@@ -7,7 +7,7 @@ import type { CustomerRecord, ManagedUser } from "../../../packages/shared/src";
 import { canManageStaff, isCenterManager, workspaceRoleLabels } from "../../../packages/shared/src/workspace-access";
 import { CreateCustomerDialog, CustomersView } from "./CustomerComponents";
 import { InviteUserForm } from "./users/invite/InviteUserForm";
-import { IntakeWorkspace } from "./workspace/IntakeWorkspace";
+import { DailyChemistScheduleDialog, IntakeWorkspace } from "./workspace/IntakeWorkspace";
 import { SampleWorkspace } from "./workspace/SampleWorkspace";
 import { OrganizationsWorkspace } from "./workspace/OrganizationsWorkspace";
 import { IntegrationSettingsWorkspace } from "./workspace/IntegrationSettingsWorkspace";
@@ -51,6 +51,8 @@ export function OperationalWorkspace() {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
+  const [dashboardCreatingCustomer, setDashboardCreatingCustomer] = useState(false);
+  const [dashboardDailyChemistScheduleOpen, setDashboardDailyChemistScheduleOpen] = useState(false);
   const extensionRequested = useRef(false);
   const accountMenu = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -148,7 +150,7 @@ export function OperationalWorkspace() {
     </aside>}
     <main className="workspace-main">
       <header className="workspace-header"><div>{!manager && <img src="/favicon.svg" alt="" width="36" height="36" />}<h1>{user && allowed ? user.role === "chemist" ? "Алт, мөнгөн гулдмайн шинжилгээ" : labels[view] : "Сорьцын төвийн удирдлага"}</h1></div>
-        {user && <div className="workspace-account">{sessionExpiresAt && <span className="session-timer" aria-label={`Сесс дуусах хүртэл ${formatSessionCountdown(sessionExpiresAt, sessionNow)}`}>Холболт салгах: <strong>{formatSessionCountdown(sessionExpiresAt, sessionNow)}</strong></span>}<div className="workspace-account-menu" ref={accountMenu}><button className="workspace-avatar" type="button" onClick={() => setAccountMenuOpen((open) => !open)} aria-label="Хэрэглэгчийн цэс" aria-expanded={accountMenuOpen} aria-haspopup="menu">{user.fullName.trim().charAt(0).toLocaleUpperCase()}</button>{accountMenuOpen && <div className="workspace-account-dropdown" role="menu"><div className="workspace-account-summary"><strong>{user.fullName}</strong><span>{workspaceRoleLabels[user.role] ?? user.role}</span></div><button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); setChangePasswordOpen(true); }}><KeyRound aria-hidden="true" size={17} />Нууц үг солих</button><button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); setAccountSettingsOpen(true); }}><Settings aria-hidden="true" size={17} />Бүртгэлийн тохиргоо</button><button type="button" role="menuitem" className="account-menu-logout" onClick={logout} disabled={loggingOut}><LogOut aria-hidden="true" size={17} />Гарах</button></div>}</div></div>}
+        {user && <div className="workspace-account">{(view === "intake" || (manager && view === "dashboard")) && <div id="intake-header-actions" className="workspace-header-actions">{manager && view === "dashboard" && <><button type="button" className="secondary-button" onClick={() => setDashboardCreatingCustomer(true)}>Харилцагч нэмэх</button><button type="button" className="secondary-button" onClick={() => setDashboardDailyChemistScheduleOpen(true)}><UsersRound size={18} aria-hidden="true" />Өнөөдрийн химич</button></>}</div>}{sessionExpiresAt && <span className="session-timer" aria-label={`Сесс дуусах хүртэл ${formatSessionCountdown(sessionExpiresAt, sessionNow)}`}>Холболт салгах: <strong>{formatSessionCountdown(sessionExpiresAt, sessionNow)}</strong></span>}<div className="workspace-account-menu" ref={accountMenu}><button className="workspace-avatar" type="button" onClick={() => setAccountMenuOpen((open) => !open)} aria-label="Хэрэглэгчийн цэс" aria-expanded={accountMenuOpen} aria-haspopup="menu">{user.fullName.trim().charAt(0).toLocaleUpperCase()}</button>{accountMenuOpen && <div className="workspace-account-dropdown" role="menu"><div className="workspace-account-summary"><strong>{user.fullName}</strong><span>{workspaceRoleLabels[user.role] ?? user.role}</span></div><button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); setChangePasswordOpen(true); }}><KeyRound aria-hidden="true" size={17} />Нууц үг солих</button><button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); setAccountSettingsOpen(true); }}><Settings aria-hidden="true" size={17} />Бүртгэлийн тохиргоо</button><button type="button" role="menuitem" className="account-menu-logout" onClick={logout} disabled={loggingOut}><LogOut aria-hidden="true" size={17} />Гарах</button></div>}</div></div>}
       </header>
       <div className="workspace-content-frame">
         {error && <p role="alert" className="login-error">{error}</p>}
@@ -166,6 +168,8 @@ export function OperationalWorkspace() {
         </>}
       </div>
     </main>
+    {dashboardCreatingCustomer && <CreateCustomerDialog onClose={() => setDashboardCreatingCustomer(false)} onCreated={() => setDashboardCreatingCustomer(false)} />}
+    {dashboardDailyChemistScheduleOpen && <DailyChemistScheduleDialog onClose={() => setDashboardDailyChemistScheduleOpen(false)} />}
     {sessionPromptOpen && <div className="session-extension-backdrop" role="presentation">
       <section className="session-extension-dialog" role="dialog" aria-modal="true" aria-labelledby="session-extension-title">
         <h2 id="session-extension-title">Сессийн хугацаа дуусах гэж байна</h2>

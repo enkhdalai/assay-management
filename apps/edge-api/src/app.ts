@@ -68,6 +68,8 @@ edgeApi.use("/v1/*", async (c, next) => {
   const method = c.req.method;
   if (user.role === "chemist") {
     const allowed = (path === "/api/v1/bullion/samples" && method === "GET")
+      || (path === "/api/v1/bullion/samples/history" && method === "GET")
+      || (path === "/api/v1/bullion/samples/history/dates" && method === "GET")
       || (path === "/api/v1/bullion/examinations" && method === "POST")
       || (/^\/api\/v1\/bullion\/samples\/[0-9a-f-]+\/substitute-chemists$/.test(path) && method === "GET")
       || (/^\/api\/v1\/bullion\/samples\/[0-9a-f-]+\/substitute$/.test(path) && method === "POST");

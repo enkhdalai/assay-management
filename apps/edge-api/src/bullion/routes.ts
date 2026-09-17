@@ -15,7 +15,7 @@ import { localCustomerForCenter } from "../customers/routes";
 import { formatBullionNumber } from "../../../../packages/shared/src/bullion-numbering";
 import { isCenterManager } from "../../../../packages/shared/src/workspace-access";
 import type { AnonymousSample } from "../../../../packages/shared/src/bullion-types";
-import { calculateBullion, BULLION_CALCULATION_VERSION } from "../../../../packages/shared/src/bullion-calculation";
+import { calculateBullion, calculateSilverBullion } from "../../../../packages/shared/src/bullion-calculation";
 import { issueCertificate } from "./certificates";
 import { verifyEsignSignature } from "../signatures/monpass";
 import { verifyEsignCertificateTrust } from "../signatures/monpass-trust";
@@ -30,7 +30,7 @@ let nextMemoryExaminationNumber = 1;
 const batchOwners = new Map<string, string>();
 const memoryExaminations = new Map<string, { revisionNo: number; input: SubmitBullionExaminationInput; submittedAt: string | null; returnedByName?: string | null; returnedAt?: string | null; returnNote?: string | null }>();
 const memorySubstitutions = new Map<string, { byName: string; transferredAt: string; recipientId: string }>();
-const memoryDailyChemistAssignments = new Map<string, { goldChemistId: string | null; silverChemistId: string | null; vacationChemistIds: string[] }>();
+const memoryDailyChemistAssignments = new Map<string, { goldChemistIds: string[]; silverChemistIds: string[]; vacationChemistIds: string[] }>();
 const visibleBatches = (user: AuthenticatedUser) => inMemoryBatches.filter((batch) => user.role === "system_admin" || batchOwners.get(batch.id) === user.organizationId);
 
 export function getMemoryReport(user: AuthenticatedUser, from: string, to: string) {
@@ -86,6 +86,22 @@ bullionRoutes.get("/samples", async (c) => {
   if (!EXAMINATION_ROLES.has(user.role)) return c.json({ ok: false }, 403);
   const samples = await listSamples(c.env, user);
   return c.json({ ok: true, data: user.role === "chemist" ? samples.filter((sample) => ["pending", "draft"].includes(sample.status)) : samples });
+});
+
+bullionRoutes.get("/samples/history", async (c) => {
+  const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
+  if (!user) return c.json({ ok: false }, 401);
+  if (user.role !== "chemist") return c.json({ ok: false }, 403);
+  const date = c.req.query("date") ?? "";
+  if (!isIsoDate(date)) return c.json({ ok: false, message: "Огноо буруу байна." }, 400);
+  return c.json({ ok: true, data: await listChemistHistory(c.env, user, date) });
+});
+
+bullionRoutes.get("/samples/history/dates", async (c) => {
+  const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
+  if (!user) return c.json({ ok: false }, 401);
+  if (user.role !== "chemist") return c.json({ ok: false }, 403);
+  return c.json({ ok: true, data: await listChemistHistoryDates(c.env, user) });
 });
 
 bullionRoutes.post("/samples/:id/approve", async (c) => {
@@ -203,7 +219,7 @@ bullionRoutes.post("/batches/:id/finalize", async (c) => {
 
   const db = createDatabase(c.env.DATABASE_URL);
   const certificate = await issueCertificate(db, user, batchId, c.env.FIELD_ENCRYPTION_KEY);
-  if (!certificate) return c.json({ ok: false, message: "Бүх гулдмайн шинжилгээг LE баталсны дараа эцсийн гэрчилгээ батална." }, 409);
+  if (!certificate) return c.json({ ok: false, message: "Бүх гулдмайн шинжилгээг лабораторын эрхлэгч баталсны дараа эцсийн гэрчилгээ батална." }, 409);
   return c.json({ ok: true, data: certificate });
 });
 
@@ -440,7 +456,7 @@ async function listSamples(env: EdgeApiEnv, user: AuthenticatedUser): Promise<An
           batchProgress: [...batchProgress.values()], batchReadyForFinalization: false, certificateNo: null } : {}),
         ...(substitution?.recipientId === user.id ? { substitutedByName: substitution.byName, substitutedAt: substitution.transferredAt } : {}),
         receivedAt: batch.receivedAt || batch.createdAt, sampleWeightMilligrams: item.sampleWeightMilligrams!,
-        delta: batch.delta ?? -0.03125, revisionNo: revision?.revisionNo ?? 0,
+        delta: batch.delta ?? -0.03125, silverTiter: batch.silverTiter ?? null, revisionNo: revision?.revisionNo ?? 0,
         status: revision?.input.status ?? "pending", examination: revision?.input ?? null };
     }));
   const result = await createDatabase(env.DATABASE_URL).execute<AnonymousSample>(sql`
@@ -452,7 +468,7 @@ async function listSamples(env: EdgeApiEnv, user: AuthenticatedUser): Promise<An
       transfer."substitutedByName", transfer."substitutedAt",
       i.bullion_no AS "bullionNo", i.examination_number::text AS "analysisNo", b.metal,
       b.received_at AS "receivedAt", i.sample_weight_milligrams::float AS "sampleWeightMilligrams",
-      b.delta::float AS delta, COALESCE(e.revision_no, 0) AS "revisionNo", COALESCE(e.status::text, 'pending') AS status,
+      b.delta::float AS delta, b.silver_titer::float AS "silverTiter", COALESCE(e.revision_no, 0) AS "revisionNo", COALESCE(e.status::text, 'pending') AS status,
       COALESCE((SELECT json_agg(json_build_object(
         'chemistId', timeline."chemistId", 'chemistName', timeline."chemistName", 'assignedCount', timeline."assignedCount",
         'completedCount', timeline."completedCount", 'completedAt', timeline."completedAt") ORDER BY timeline."chemistName")
@@ -479,6 +495,7 @@ async function listSamples(env: EdgeApiEnv, user: AuthenticatedUser): Promise<An
         'bullionItemId', i.id, 'examinationNo', i.examination_number::text, 'sampleWeightGrams', e.sample_weight_grams::float,
         'delta', e.delta::float, 'status', e.status, 'weightEntries', e.weight_entries,
         'measurementEntries', e.measurement_entries, 'goldResult', e.gold_result::float, 'silverResult', e.silver_result::float,
+        'silverMethod', e.silver_method, 'silverTiterMilligramsPerMilliliter', e.silver_titer_mg_per_ml::float, 'silverBlankVolumeMilliliters', e.silver_blank_volume_ml::float,
         'reexaminationRequested', e.reexamination_requested, 'notes', e.notes) END AS examination
     FROM bullion_intake_items i JOIN bullion_intake_batches b ON b.id = i.batch_id
     JOIN customers customer ON customer.id = b.customer_id
@@ -511,6 +528,65 @@ async function listSamples(env: EdgeApiEnv, user: AuthenticatedUser): Promise<An
     delete anonymous.batchProgress; delete anonymous.batchReadyForFinalization; delete anonymous.certificateNo; delete anonymous.certificateSignatureStatus;
     return anonymous;
   });
+}
+
+async function listChemistHistory(env: EdgeApiEnv, user: AuthenticatedUser, date: string): Promise<AnonymousSample[]> {
+  if (!env.DATABASE_URL) {
+    return visibleBatches(user).flatMap((batch) => batch.items.map((item) => ({ batch, item })))
+      .filter(({ item }) => item.assignedChemistId === user.id)
+      .flatMap(({ batch, item }) => {
+        const revision = memoryExaminations.get(item.id);
+        if (!revision?.submittedAt || revision.input.status !== "submitted" || mongoliaDate(revision.submittedAt) !== date) return [];
+        return [{ id: item.id, bullionNo: item.bullionNo, analysisNo: item.analysisNo!, metal: batch.metal, receivedAt: batch.receivedAt || batch.createdAt,
+          sampleWeightMilligrams: item.sampleWeightMilligrams!, delta: batch.delta ?? -0.03125, silverTiter: batch.silverTiter ?? null,
+          assignedChemistName: user.fullName, completedAt: revision.submittedAt,
+          revisionNo: revision.revisionNo, status: revision.input.status, examination: revision.input }];
+      })
+      .sort((left, right) => Number(left.analysisNo) - Number(right.analysisNo));
+  }
+  const result = await createDatabase(env.DATABASE_URL).execute<AnonymousSample>(sql`
+    SELECT i.id, i.bullion_no AS "bullionNo", e.examination_no::text AS "analysisNo", b.metal,
+      b.received_at AS "receivedAt", e.submitted_at AS "completedAt", ${user.fullName} AS "assignedChemistName",
+      i.sample_weight_milligrams::float AS "sampleWeightMilligrams", b.delta::float AS delta,
+      b.silver_titer::float AS "silverTiter", e.revision_no AS "revisionNo", e.status::text AS status,
+      json_build_object(
+        'bullionItemId', i.id, 'examinationNo', e.examination_no::text, 'sampleWeightGrams', e.sample_weight_grams::float,
+        'delta', e.delta::float, 'status', e.status, 'weightEntries', e.weight_entries, 'measurementEntries', e.measurement_entries,
+        'goldResult', e.gold_result::float, 'silverResult', e.silver_result::float, 'silverMethod', e.silver_method,
+        'silverTiterMilligramsPerMilliliter', e.silver_titer_mg_per_ml::float, 'silverBlankVolumeMilliliters', e.silver_blank_volume_ml::float,
+        'reexaminationRequested', e.reexamination_requested, 'notes', e.notes) AS examination
+    FROM bullion_examination_revisions e
+    JOIN bullion_intake_items i ON i.id = e.bullion_item_id
+    JOIN bullion_intake_batches b ON b.id = i.batch_id
+    JOIN organizations o ON o.id = b.assay_center_id
+    WHERE e.entered_by_user_id = ${user.id} AND b.assay_center_id = ${user.organizationId}
+      AND o.type IN ('private_assay_center', 'government_assay_center')
+      AND e.status IN ('submitted', 'approved', 'rejected', 'superseded') AND e.submitted_at IS NOT NULL
+      AND (e.submitted_at AT TIME ZONE 'Asia/Ulaanbaatar')::date = ${date}::date
+    ORDER BY e.examination_no, e.revision_no
+  `);
+  return readRows(result);
+}
+
+async function listChemistHistoryDates(env: EdgeApiEnv, user: AuthenticatedUser): Promise<string[]> {
+  if (!env.DATABASE_URL) return [...new Set(visibleBatches(user).flatMap((batch) => batch.items)
+    .filter((item) => item.assignedChemistId === user.id)
+    .flatMap((item) => {
+      const examination = memoryExaminations.get(item.id);
+      return examination?.submittedAt && examination.input.status === "submitted" ? [mongoliaDate(examination.submittedAt)] : [];
+    }))].sort().reverse();
+  const result = await createDatabase(env.DATABASE_URL).execute<{ date: string }>(sql`
+    SELECT DISTINCT (e.submitted_at AT TIME ZONE 'Asia/Ulaanbaatar')::date::text AS date
+    FROM bullion_examination_revisions e
+    JOIN bullion_intake_items i ON i.id = e.bullion_item_id
+    JOIN bullion_intake_batches b ON b.id = i.batch_id
+    JOIN organizations o ON o.id = b.assay_center_id
+    WHERE e.entered_by_user_id = ${user.id} AND b.assay_center_id = ${user.organizationId}
+      AND o.type IN ('private_assay_center', 'government_assay_center')
+      AND e.status IN ('submitted', 'approved', 'rejected', 'superseded') AND e.submitted_at IS NOT NULL
+    ORDER BY date DESC
+  `);
+  return readRows(result).map((row) => row.date);
 }
 
 async function assignmentQuery(batchId: string, user: AuthenticatedUser, updateEventId?: string) {
@@ -566,12 +642,15 @@ async function assignInMemory(batch: BullionIntakeBatchRecord, user: Authenticat
 
 async function applyDailyChemistAssignmentInMemory(batch: BullionIntakeBatchRecord, user: AuthenticatedUser, env: EdgeApiEnv) {
   const assignment = memoryDailyChemistAssignments.get(dailyChemistKey(user.organizationId, mongoliaDate(batch.receivedAt || new Date())));
-  const chemistId = batch.metal === "gold" ? assignment?.goldChemistId : assignment?.silverChemistId;
-  if (!chemistId || assignment?.vacationChemistIds.includes(chemistId)) return;
+  const chemistIds = (batch.metal === "gold" ? assignment?.goldChemistIds : assignment?.silverChemistIds) ?? [];
+  if (!chemistIds.length) return;
   const staff = await (await getAuthStore(env))?.listStaff(user) ?? [];
-  const chemist = staff.find((person) => person.id === chemistId && person.organizationId === user.organizationId && person.role === "chemist" && person.status === "active");
-  if (!chemist) return;
-  for (const item of batch.items.filter((item) => !item.assignedChemistId)) {
+  const eligible = chemistIds.map((chemistId) => staff.find((person) => person.id === chemistId
+    && person.organizationId === user.organizationId && person.role === "chemist" && person.status === "active"
+    && !assignment?.vacationChemistIds.includes(chemistId))).filter((chemist): chemist is NonNullable<typeof chemist> => Boolean(chemist));
+  for (const [index, item] of batch.items.filter((item) => !item.assignedChemistId).entries()) {
+    const chemist = eligible[index % eligible.length];
+    if (!chemist) return;
     item.assignedChemistId = chemist.id;
     item.assignedChemistName = chemist.fullName;
     item.assignedAt = new Date().toISOString();
@@ -633,7 +712,7 @@ bullionRoutes.get("/intakes/daily-chemist-assignment", async (c) => {
   if (!c.env.DATABASE_URL) {
     const staff = (await (await getAuthStore(c.env))?.listStaff(user) ?? []).filter((person) => person.organizationId === user.organizationId && person.role === "chemist");
     const assignment = memoryDailyChemistAssignments.get(dailyChemistKey(user.organizationId, date));
-    return c.json({ ok: true, data: { date, goldChemistId: assignment?.goldChemistId ?? null, silverChemistId: assignment?.silverChemistId ?? null,
+    return c.json({ ok: true, data: { date, goldChemistIds: assignment?.goldChemistIds ?? [], silverChemistIds: assignment?.silverChemistIds ?? [],
       chemists: staff.map((person) => ({ id: person.id, fullName: person.fullName, status: person.status, onVacation: assignment?.vacationChemistIds.includes(person.id) ?? false })) } });
   }
   const db = createDatabase(c.env.DATABASE_URL);
@@ -650,8 +729,8 @@ bullionRoutes.get("/intakes/daily-chemist-assignment", async (c) => {
   ]);
   const selected = readRows(assignments);
   return c.json({ ok: true, data: { date,
-    goldChemistId: selected.find((assignment) => assignment.metal === "gold")?.chemistId ?? null,
-    silverChemistId: selected.find((assignment) => assignment.metal === "silver")?.chemistId ?? null,
+    goldChemistIds: selected.filter((assignment) => assignment.metal === "gold").map((assignment) => assignment.chemistId),
+    silverChemistIds: selected.filter((assignment) => assignment.metal === "silver").map((assignment) => assignment.chemistId),
     chemists: readRows(chemists),
   } });
 });
@@ -662,25 +741,27 @@ bullionRoutes.put("/intakes/daily-chemist-assignment", async (c) => {
   if (!isCenterManager(user.role)) return c.json({ ok: false }, 403);
   const body = object(await c.req.json().catch(() => null));
   const date = text(body.date) || localDate();
-  const goldChemistId = body.goldChemistId === null ? null : text(body.goldChemistId);
-  const silverChemistId = body.silverChemistId === null ? null : text(body.silverChemistId);
+  const goldChemistIds = Array.isArray(body.goldChemistIds) ? [...new Set(body.goldChemistIds.map(text).filter(isUuid))] : [];
+  const silverChemistIds = Array.isArray(body.silverChemistIds) ? [...new Set(body.silverChemistIds.map(text).filter(isUuid))] : [];
   const vacationChemistIds = Array.isArray(body.vacationChemistIds) ? [...new Set(body.vacationChemistIds.map(text).filter(isUuid))] : [];
-  if (!isIsoDate(date) || !(goldChemistId === null || isUuid(goldChemistId)) || !(silverChemistId === null || isUuid(silverChemistId))
-    || Object.keys(body).some((key) => !["date", "goldChemistId", "silverChemistId", "vacationChemistIds"].includes(key))) return c.json({ ok: false }, 400);
-  const selectedIds = [goldChemistId, silverChemistId].filter((value): value is string => value !== null);
+  if (!isIsoDate(date) || Object.keys(body).some((key) => !["date", "goldChemistIds", "silverChemistIds", "vacationChemistIds"].includes(key))) return c.json({ ok: false }, 400);
+  const selectedIds = [...new Set([...goldChemistIds, ...silverChemistIds])];
   if (selectedIds.some((id) => vacationChemistIds.includes(id))) return c.json({ ok: false, message: "Амралттай химичийг өдөр тутмын хуваарьт сонгох боломжгүй." }, 400);
   if (!c.env.DATABASE_URL) {
     const staff = await (await getAuthStore(c.env))?.listStaff(user) ?? [];
     const validIds = new Set(staff.filter((person) => person.organizationId === user.organizationId && person.role === "chemist" && person.status === "active").map((person) => person.id));
     if ([...selectedIds, ...vacationChemistIds].some((id) => !validIds.has(id))) return c.json({ ok: false, message: "Сонгосон химич идэвхтэй биш байна." }, 400);
-    memoryDailyChemistAssignments.set(dailyChemistKey(user.organizationId, date), { goldChemistId, silverChemistId, vacationChemistIds });
+    memoryDailyChemistAssignments.set(dailyChemistKey(user.organizationId, date), { goldChemistIds, silverChemistIds, vacationChemistIds });
     return c.json({ ok: true });
   }
   const db = createDatabase(c.env.DATABASE_URL);
   const activeChemists = readRows(await db.execute<{ id: string }>(sql`SELECT id FROM users WHERE organization_id = ${user.organizationId}::uuid AND role = 'chemist' AND status = 'active'`));
   const activeIds = new Set(activeChemists.map((chemist) => chemist.id));
   if ([...selectedIds, ...vacationChemistIds].some((id) => !activeIds.has(id))) return c.json({ ok: false, message: "Сонгосон химич идэвхтэй биш байна." }, 400);
-  const assignments = [{ metal: "gold", chemistId: goldChemistId }, { metal: "silver", chemistId: silverChemistId }].filter((assignment): assignment is { metal: "gold" | "silver"; chemistId: string } => assignment.chemistId !== null);
+  const assignments = [
+    ...goldChemistIds.map((chemistId) => ({ metal: "gold", chemistId })),
+    ...silverChemistIds.map((chemistId) => ({ metal: "silver", chemistId })),
+  ];
   await db.batch([
     db.execute(sql`SELECT pg_advisory_xact_lock(741206825)`),
     db.execute(sql`DELETE FROM chemist_daily_availability WHERE organization_id = ${user.organizationId}::uuid AND assignment_date = ${date}::date`),
@@ -692,7 +773,7 @@ bullionRoutes.put("/intakes/daily-chemist-assignment", async (c) => {
       SELECT ${user.organizationId}::uuid, ${date}::date, record.metal::metal_type, record."chemistId"::uuid, ${user.id}::uuid
       FROM jsonb_to_recordset(${JSON.stringify(assignments)}::jsonb) AS record(metal text, "chemistId" text)`),
   ]);
-  await appendAuditLog(db, user, "bullion_daily_chemist_assignment.updated", "organizations", user.organizationId, { date, goldChemistId, silverChemistId, vacationChemistIds });
+  await appendAuditLog(db, user, "bullion_daily_chemist_assignment.updated", "organizations", user.organizationId, { date, goldChemistIds, silverChemistIds, vacationChemistIds });
   return c.json({ ok: true });
 });
 
@@ -763,13 +844,14 @@ bullionRoutes.patch("/intakes/:id", async (c) => {
     if (!batch) return c.json({ ok: false }, 404);
     if ((batch.status !== "draft" && !(batch.status === "ready_for_sampling" && isCenterManager(user.role) && body.status !== "draft")) || changes.length !== batch.items.length || batch.items.some((item) => !changes.some((change) => change.id === item.id))) return c.json({ ok: false }, 409);
     if (batch.items.some((item) => {
-      const after = changes.find((change) => change.id === item.id)!.after;
-      return after != null && Number(after) > item.grossWeightBeforeGrams;
-    })) return c.json({ ok: false, message: "Дараах жин өмнөх жингээс их байж болохгүй." }, 400);
+      const change = changes.find((candidate) => candidate.id === item.id)!;
+      return (change.after != null && Number(change.after) > item.grossWeightBeforeGrams)
+        || (change.slag != null && change.after != null && Number(change.slag) > item.grossWeightBeforeGrams - Number(change.after));
+    })) return c.json({ ok: false, message: "Дараах жин өмнөх жингээс их, Шлак жин нь хайлалтын жингийн зөрүүнээс их байж болохгүй." }, 400);
     for (const item of batch.items) {
       const change = changes.find((change) => change.id === item.id)!;
       item.grossWeightAfterGrams = change.after as number | undefined;
-      item.slagWeightGrams = change.after == null ? undefined : Number((item.grossWeightBeforeGrams - Number(change.after)).toFixed(4));
+      item.slagWeightGrams = change.slag as number | undefined;
       if (isCenterManager(user.role)) item.sampleWeightMilligrams = change.sample as number | undefined;
     }
     batch.status = body.status as "draft" | "ready_for_sampling" | "sample_taken";
@@ -790,13 +872,13 @@ bullionRoutes.patch("/intakes/:id", async (c) => {
         AND (${user.role} = 'system_admin' OR b.assay_center_id = ${user.organizationId})
         AND (SELECT count(*) FROM bullion_intake_items WHERE batch_id = b.id) = ${changes.length}
         AND NOT EXISTS (SELECT 1 FROM incoming r WHERE NOT EXISTS (SELECT 1 FROM bullion_intake_items i WHERE i.id = r.id AND i.batch_id = b.id))
-        AND NOT EXISTS (SELECT 1 FROM incoming r JOIN bullion_intake_items i ON i.id = r.id WHERE r.after > i.gross_weight_before_grams)
+        AND NOT EXISTS (SELECT 1 FROM incoming r JOIN bullion_intake_items i ON i.id = r.id WHERE r.after > i.gross_weight_before_grams OR (r.slag IS NOT NULL AND r.after IS NOT NULL AND r.slag > i.gross_weight_before_grams - r.after))
       FOR UPDATE
     ), previous AS MATERIALIZED (
       SELECT i.id, i.gross_weight_after_grams, i.slag_weight_grams, i.sample_weight_milligrams
       FROM bullion_intake_items i JOIN target t ON t.id = i.batch_id
     ), changed AS (
-      UPDATE bullion_intake_items i SET gross_weight_after_grams = r.after, slag_weight_grams = i.gross_weight_before_grams - round(r.after, 4),
+      UPDATE bullion_intake_items i SET gross_weight_after_grams = r.after, slag_weight_grams = r.slag,
         sample_weight_milligrams = CASE WHEN ${user.role} = 'intake_officer' THEN i.sample_weight_milligrams ELSE r.sample END
       FROM incoming r WHERE i.id = r.id AND i.batch_id IN (SELECT id FROM target)
       RETURNING i.id, i.gross_weight_after_grams, i.slag_weight_grams, i.sample_weight_milligrams
@@ -812,7 +894,7 @@ bullionRoutes.patch("/intakes/:id", async (c) => {
     db.execute(await assignmentQuery(id, user, eventId)),
   ]);
   const result = readRows(results[1]);
-  if (!result.length) return c.json({ ok: false, message: "Бүртгэл өөрчлөгдсөн эсвэл жин буруу байна. Дараах жин өмнөх жингээс их байж болохгүй." }, 409);
+  if (!result.length) return c.json({ ok: false, message: "Бүртгэл өөрчлөгдсөн эсвэл жин буруу байна. Дараах жин өмнөх жингээс их, Шлак жингийн зөрүүнээс их байж болохгүй." }, 409);
   return c.json({ ok: true });
 });
 
@@ -926,7 +1008,7 @@ bullionRoutes.post("/examinations", async (c) => {
   input.examinationNo = sample.analysisNo;
   input.sampleWeightGrams = sample.sampleWeightMilligrams / 1000;
   input.delta = sample.delta;
-  if (input.calculationVersion === BULLION_CALCULATION_VERSION) {
+  if (sample.metal === "gold") {
     const calculated = calculateBullion(input.weightEntries, input.sampleWeightGrams, sample.delta);
     if (input.status === "submitted" && (calculated.errors.length || calculated.goldResult == null || calculated.silverResult == null)) {
       return c.json({ ok: false, message: calculated.errors.join(" ") || "Мөнгөний сорьц бодох Нэмэлт мөрийг оруулна уу." }, 400);
@@ -936,6 +1018,23 @@ bullionRoutes.post("/examinations", async (c) => {
     input.silverResult = calculated.silverResult;
     input.measurementEntries = ["Чек мөнгө", "Дээжийн үлдэгдэл жин", "Шинжилгээний хорогдол", "Королько, корточка"].map((label, index) => ({
       label, reading: [input.measurementEntries[0]?.reading ?? 0, calculated.remainingMilligrams, calculated.lossMilligrams, calculated.returnedMilligrams][index],
+    }));
+  }
+  if (sample.metal === "silver") {
+    const calculated = calculateSilverBullion(input.weightEntries, input.sampleWeightGrams, {
+      method: input.silverMethod ?? "titrimetric",
+      titerMilligramsPerMilliliter: input.silverTiterMilligramsPerMilliliter ?? 0,
+      // Blank volume is not part of the approved silver examination screen.
+      blankVolumeMilliliters: undefined,
+    });
+    if (input.status === "submitted" && (calculated.errors.length || calculated.silverResult == null)) {
+      return c.json({ ok: false, message: calculated.errors.join(" ") || "Мөнгөний сорьцыг бодож чадсангүй." }, 400);
+    }
+    input.weightEntries = calculated.weightEntries;
+    input.goldResult = undefined;
+    input.silverResult = calculated.silverResult;
+    input.measurementEntries = calculated.weightEntries.map((entry, index) => ({
+      label: `${index + 1}-р мөр`, reading: entry.outputWeightGrams, silverAssay: entry.silverAssay,
     }));
   }
   if (!c.env.DATABASE_URL) {
@@ -958,7 +1057,7 @@ async function listIntakesFromDatabase(db: AppDatabase, user: AuthenticatedUser)
   const result = await db.execute<IntakeRow>(sql`
     SELECT b.id, b.public_id AS "publicId", b.metal, b.received_at AS "receivedAt", b.branch_name AS "branchName",
       b.province, b.district, b.dispatch_reference AS "dispatchReference", b.initial_bullion_number AS "initialBullionNumber",
-      b.piece_count AS "pieceCount", b.delta::float AS delta, b.status, b.created_at AS "createdAt",
+      b.piece_count AS "pieceCount", b.delta::float AS delta, b.silver_titer::float AS "silverTiter", b.status, b.created_at AS "createdAt",
       c.id AS "customerId", c.display_name AS "customerName", u.full_name AS "receivedByName",
       COALESCE(json_agg(json_build_object('id', i.id, 'sequenceNo', i.sequence_no, 'analysisNo', i.examination_number::text,
         'bullionNo', i.bullion_no, 'grossWeightBeforeGrams', i.gross_weight_before_grams::float,
@@ -995,13 +1094,13 @@ async function createIntakeInDatabase(
       created AS (
         INSERT INTO bullion_intake_batches (
           id, public_id, assay_center_id, customer_id, received_by_user_id, metal, received_at,
-          branch_name, province, district, dispatch_reference, initial_bullion_number, piece_count, delta, status
+          branch_name, province, district, dispatch_reference, initial_bullion_number, piece_count, delta, silver_titer, status
         ) SELECT ${batchId}::uuid,
           c."nextRegistrationNumber",
           c."organizationId", c.id, ${user.id}::uuid, ${input.metal},
           ${input.receivedAt || now}::timestamptz, ${input.branchName || null}, ${input.province || null},
           ${input.district || null}, ${input.dispatchReference || null}, c."nextNumber",
-          ${items.length}, ${input.delta ?? 0}, ${input.status ?? "draft"}
+          ${items.length}, ${input.delta ?? 0}, ${input.silverTiter ?? null}, ${input.status ?? "draft"}
         FROM customer c RETURNING *
       ), inserted_items AS (
         INSERT INTO bullion_intake_items (
@@ -1015,15 +1114,19 @@ async function createIntakeInDatabase(
           AS r(id uuid, "sequenceNo" int, "grossWeightBeforeGrams" numeric,
             "grossWeightAfterGrams" numeric, "slagWeightGrams" numeric, "sampleWeightMilligrams" numeric)
         LEFT JOIN LATERAL (
-          SELECT assignment.chemist_id FROM bullion_daily_chemist_assignments assignment
-          JOIN users chemist ON chemist.id = assignment.chemist_id AND chemist.organization_id = b.assay_center_id
-            AND chemist.role = 'chemist' AND chemist.status = 'active'
-          LEFT JOIN chemist_daily_availability availability ON availability.organization_id = assignment.organization_id
-            AND availability.chemist_id = assignment.chemist_id AND availability.assignment_date = assignment.assignment_date
-          WHERE assignment.organization_id = b.assay_center_id AND assignment.metal = b.metal
-            AND assignment.assignment_date = (b.received_at AT TIME ZONE 'Asia/Ulaanbaatar')::date
-            AND NOT COALESCE(availability.is_on_vacation, false)
-          LIMIT 1
+          SELECT eligible.chemist_id FROM (
+            SELECT assignment.chemist_id, row_number() OVER (ORDER BY assignment.chemist_id) AS position,
+              count(*) OVER () AS total
+            FROM bullion_daily_chemist_assignments assignment
+            JOIN users chemist ON chemist.id = assignment.chemist_id AND chemist.organization_id = b.assay_center_id
+              AND chemist.role = 'chemist' AND chemist.status = 'active'
+            LEFT JOIN chemist_daily_availability availability ON availability.organization_id = assignment.organization_id
+              AND availability.chemist_id = assignment.chemist_id AND availability.assignment_date = assignment.assignment_date
+            WHERE assignment.organization_id = b.assay_center_id AND assignment.metal = b.metal
+              AND assignment.assignment_date = (b.received_at AT TIME ZONE 'Asia/Ulaanbaatar')::date
+              AND NOT COALESCE(availability.is_on_vacation, false)
+          ) eligible
+          WHERE eligible.position = (((r."sequenceNo" - 1)::bigint % eligible.total) + 1)
         ) daily_assignment ON true
         ORDER BY r."sequenceNo"
         RETURNING id, examination_number, bullion_no
@@ -1048,7 +1151,7 @@ async function createIntakeInDatabase(
     receivedByName: user.fullName, metal: input.metal, receivedAt: input.receivedAt || now,
     branchName: input.branchName, province: input.province, district: input.district,
     dispatchReference: input.dispatchReference, initialBullionNumber: allocated.nextNumber,
-    pieceCount: items.length, delta: input.delta, status: input.status, createdAt: now,
+    pieceCount: items.length, delta: input.delta, silverTiter: input.silverTiter ?? null, status: input.status, createdAt: now,
     items: items.map((item) => ({ ...item, bullionNo: allocated.bullionNumbers[item.id], analysisNo: allocated.examinationNumbers[item.id] })),
   };
 }
@@ -1068,10 +1171,11 @@ async function createExaminationInDatabase(db: AppDatabase, user: AuthenticatedU
   const results = await db.batch([db.execute(sql`SELECT pg_advisory_xact_lock(741206825)`), db.execute<{ id: string }>(sql`
     INSERT INTO bullion_examination_revisions (
       id, bullion_item_id, revision_no, examination_no, entered_by_user_id, status, delta, sample_weight_grams,
-      weight_entries, measurement_entries, gold_result, silver_result, reexamination_requested, notes, submitted_at
+      weight_entries, measurement_entries, gold_result, silver_result, silver_method, silver_titer_mg_per_ml, silver_blank_volume_ml, reexamination_requested, notes, submitted_at
     ) SELECT ${id}, ${item.id}, ${item.nextRevisionNo}, ${input.examinationNo}, ${user.id}, ${input.status},
       ${input.delta ?? 0}, ${input.sampleWeightGrams}, ${JSON.stringify(input.weightEntries)}::jsonb,
       ${JSON.stringify(input.measurementEntries)}::jsonb, ${input.goldResult ?? null}, ${input.silverResult ?? null},
+      ${input.silverMethod ?? null}, ${input.silverTiterMilligramsPerMilliliter ?? null}, ${input.silverBlankVolumeMilliliters ?? null},
       ${input.reexaminationRequested ?? false}, ${input.notes || null},
       ${input.status === "submitted" ? new Date() : null}
     FROM bullion_intake_items i WHERE i.id = ${item.id}
@@ -1094,7 +1198,7 @@ function createIntakeInMemory(user: AuthenticatedUser, input: CreateBullionIntak
     customerId: input.customerId, customerName: "Харилцагч", receivedByName: user.fullName, metal: input.metal,
     receivedAt: input.receivedAt ?? now, branchName: input.branchName, province: input.province, district: input.district,
     dispatchReference: input.dispatchReference, initialBullionNumber: input.initialBullionNumber,
-    pieceCount: input.items.length, delta: input.delta, status: input.status, createdAt: now,
+    pieceCount: input.items.length, delta: input.delta, silverTiter: input.silverTiter ?? null, status: input.status, createdAt: now,
     items: input.items.map((item, index) => ({ ...item, id: crypto.randomUUID(), sequenceNo: index + 1 })),
   };
   record.initialBullionNumber = formatBullionNumber(initialNumber.prefix, initialNumber.value);
@@ -1110,13 +1214,12 @@ function normalizeIntake(value: unknown): CreateBullionIntakeInput {
   return {
     customerId: text(body.customerId), metal: body.metal === "silver" ? "silver" : "gold", receivedAt: text(body.receivedAt),
     branchName: text(body.branchName), province: text(body.province), district: text(body.district), dispatchReference: text(body.dispatchReference),
-    initialBullionNumber: text(body.initialBullionNumber), delta: number(body.delta), status: body.status === "sample_taken" ? "sample_taken" : body.status === "ready_for_sampling" ? "ready_for_sampling" : "draft",
+    initialBullionNumber: text(body.initialBullionNumber), delta: number(body.delta), silverTiter: number(body.silverTiter), status: body.status === "sample_taken" ? "sample_taken" : body.status === "ready_for_sampling" ? "ready_for_sampling" : "draft",
     items: Array.isArray(body.items) ? body.items.map((item) => {
       const row = object(item);
-      const before = number(row.grossWeightBeforeGrams) ?? 0;
       const after = number(row.grossWeightAfterGrams);
       return { analysisNo: text(row.analysisNo), bullionNo: text(row.bullionNo), grossWeightBeforeGrams: number(row.grossWeightBeforeGrams) ?? 0,
-        grossWeightAfterGrams: after, slagWeightGrams: after == null ? undefined : Number((before - after).toFixed(4)), sampleWeightMilligrams: number(row.sampleWeightMilligrams) };
+        grossWeightAfterGrams: after, slagWeightGrams: number(row.slagWeightGrams), sampleWeightMilligrams: number(row.sampleWeightMilligrams) };
     }) : [],
   };
 }
@@ -1130,19 +1233,24 @@ function normalizeExamination(value: unknown): SubmitBullionExaminationInput {
     delta: number(body.delta), status: body.status === "submitted" ? "submitted" : "draft",
     weightEntries: Array.isArray(body.weightEntries) ? body.weightEntries.map((entry) => {
       const row = object(entry); return { receivedWeightGrams: number(row.receivedWeightGrams) ?? 0,
-        calculation: row.calculation === "yes" || row.calculation === "addition" ? row.calculation : "no", outputWeightGrams: number(row.outputWeightGrams) ?? 0, goldAssay: number(row.goldAssay) };
+        calculation: row.calculation === "yes" || row.calculation === "addition" ? row.calculation : "no", outputWeightGrams: number(row.outputWeightGrams) ?? 0, goldAssay: number(row.goldAssay), silverAssay: number(row.silverAssay) };
     }) : [],
     measurementEntries: Array.isArray(body.measurementEntries) ? body.measurementEntries.map((entry) => {
       const row = object(entry); return { label: text(row.label), reading: number(row.reading) ?? 0, goldAssay: number(row.goldAssay), silverAssay: number(row.silverAssay) };
     }) : [],
-    goldResult: number(body.goldResult), silverResult: number(body.silverResult), reexaminationRequested: body.reexaminationRequested === true, notes: text(body.notes),
+    goldResult: number(body.goldResult), silverResult: number(body.silverResult),
+    silverMethod: body.silverMethod === "rhodanometric" ? "rhodanometric" : body.silverMethod === "titrimetric" ? "titrimetric" : undefined,
+    silverTiterMilligramsPerMilliliter: number(body.silverTiterMilligramsPerMilliliter), silverBlankVolumeMilliliters: number(body.silverBlankVolumeMilliliters),
+    reexaminationRequested: body.reexaminationRequested === true, notes: text(body.notes),
   };
 }
 
 function validateIntake(input: CreateBullionIntakeInput) {
   if (input.items.some((item) => item.grossWeightAfterGrams != null && item.grossWeightAfterGrams > item.grossWeightBeforeGrams)) return "Дараах жин өмнөх жингээс их байж болохгүй.";
+  if (input.items.some((item) => item.slagWeightGrams != null && item.grossWeightAfterGrams != null && item.slagWeightGrams > item.grossWeightBeforeGrams - item.grossWeightAfterGrams)) return "Шлак жин нь хайлалтын жингийн зөрүүнээс их байж болохгүй.";
   if (input.status === "ready_for_sampling" && input.items.some((item) => (item.grossWeightAfterGrams ?? 0) <= 0)) return "Хайлалтын дараах жинг оруулна уу.";
   if (!isUuid(input.customerId)) return "Харилцагчийг сонгоно уу.";
+  if (input.metal === "silver" && (!Number.isFinite(input.silverTiter) || (input.silverTiter ?? 0) <= 0)) return "Мөнгөний титрийг зөв оруулна уу.";
   if (!input.items.length || input.items.length > 100) return "1-100 гулдмайн мөр оруулна уу.";
   if (input.items.some((item) => item.grossWeightBeforeGrams <= 0)) return "Гулдмайн жинг зөв оруулна уу.";
   if (input.receivedAt && !Number.isFinite(Date.parse(input.receivedAt))) return "Огноог зөв оруулна уу.";
@@ -1156,7 +1264,10 @@ function validateExamination(input: SubmitBullionExaminationInput) {
   if (!Number.isInteger(input.expectedRevision) || (input.expectedRevision ?? 0) < 0
     || [input.goldResult, input.silverResult].some((value) => value != null && (value < 0 || value > 1000))
     || input.weightEntries.some((entry) => entry.receivedWeightGrams < 0 || entry.outputWeightGrams < 0
-      || (entry.goldAssay != null && (entry.goldAssay < 0 || entry.goldAssay > 1000)))) return "Хэмжилтийн утга буруу байна.";
+      || (entry.goldAssay != null && (entry.goldAssay < 0 || entry.goldAssay > 1000))
+      || (entry.silverAssay != null && (entry.silverAssay < 0 || entry.silverAssay > 1000))
+      || (input.silverTiterMilligramsPerMilliliter != null && input.silverTiterMilligramsPerMilliliter <= 0)
+      || (input.silverBlankVolumeMilliliters != null && input.silverBlankVolumeMilliliters <= 0))) return "Хэмжилтийн утга буруу байна.";
   return null;
 }
 async function appendAuditLog(db: AppDatabase, user: AuthenticatedUser, action: string, entityType: string, entityId: string, metadata: unknown) {
@@ -1166,7 +1277,7 @@ async function appendAuditLog(db: AppDatabase, user: AuthenticatedUser, action: 
   await db.execute(sql`INSERT INTO audit_logs (id, actor_user_id, actor_organization_id, action, entity_type, entity_id, new_values, reason, previous_hash, entry_hash, created_at)
     VALUES (${crypto.randomUUID()}, ${user.id}, ${user.organizationId}, ${action}, ${entityType}, ${entityId}, ${JSON.stringify(metadata)}::jsonb, 'Bullion workflow action', ${previous}, ${hash}, ${now})`);
 }
-function mapIntakeRow(row: IntakeRow): BullionIntakeBatchRecord { return { ...row, pieceCount: Number(row.pieceCount), delta: Number(row.delta), receivedAt: iso(row.receivedAt), createdAt: iso(row.createdAt), items: Array.isArray(row.items) ? row.items : [] }; }
+function mapIntakeRow(row: IntakeRow): BullionIntakeBatchRecord { return { ...row, pieceCount: Number(row.pieceCount), delta: Number(row.delta), silverTiter: number(row.silverTiter) ?? null, receivedAt: iso(row.receivedAt), createdAt: iso(row.createdAt), items: Array.isArray(row.items) ? row.items : [] }; }
 function iso(value: string | Date): string { return value instanceof Date ? value.toISOString() : value; }
 function readRows<T>(result: T[] | { rows: T[] }): T[] { return Array.isArray(result) ? result : result.rows; }
 function object(value: unknown): Record<string, unknown> { return value && typeof value === "object" ? value as Record<string, unknown> : {}; }

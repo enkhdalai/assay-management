@@ -7,6 +7,7 @@ export type BullionWeightEntry = {
   calculation: BullionCalculation;
   outputWeightGrams: number;
   goldAssay?: number;
+  silverAssay?: number;
 };
 
 export type BullionMeasurementEntry = {
@@ -35,6 +36,7 @@ export type CreateBullionIntakeInput = {
   dispatchReference?: string;
   initialBullionNumber?: string;
   delta?: number;
+  silverTiter?: number;
   status?: "draft" | "ready_for_sampling" | "sample_taken";
   items: BullionIntakeItemInput[];
 };
@@ -69,6 +71,9 @@ export type SubmitBullionExaminationInput = {
   measurementEntries: BullionMeasurementEntry[];
   goldResult?: number;
   silverResult?: number;
+  silverMethod?: "rhodanometric" | "titrimetric";
+  silverTiterMilligramsPerMilliliter?: number;
+  silverBlankVolumeMilliliters?: number;
   reexaminationRequested?: boolean;
   notes?: string;
 };
@@ -105,6 +110,7 @@ export type AnonymousSample = {
   receivedAt: string;
   sampleWeightMilligrams: number;
   delta: number;
+  silverTiter?: number | null;
   revisionNo: number;
   status: string;
   examination: SubmitBullionExaminationInput | null;

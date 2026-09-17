@@ -120,6 +120,27 @@
       "when": 1789610400000,
       "tag": "0016_daily_chemist_assignments",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1789611300000,
+      "tag": "0017_multiple_daily_chemist_assignments",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1789704000000,
+      "tag": "0018_silver_bullion_examination_methods",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1789707600000,
+      "tag": "0019_silver_bullion_intake_titer",
+      "breakpoints": true
     }
   ]
 }

@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import ts from 'typescript';
 const source = await readFile(new URL('../packages/shared/src/bullion-calculation.ts', import.meta.url), 'utf8');
 const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
-const { calculateBullion } = await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
+const { calculateBullion, calculateSilverBullion } = await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
 const entries = [[248.27,196.64,'yes'],[248.99,197.27,'yes'],[249.85,246.23,'addition'],[0,0,'no']].map(([a,b,calculation])=>({receivedWeightGrams:a/1000,outputWeightGrams:b/1000,calculation}));
 test('fire assay reproduces laboratory example with signed mass delta and full-precision average',()=>{
  const result=calculateBullion(entries,15.58,-0.03125);
@@ -29,4 +29,32 @@ test('invalid, missing, out-of-range and ambiguous rows never produce final resu
  assert(calculateBullion(entries,0.1,-0.03125).errors.length);
  const noAdditional=calculateBullion(entries.slice(0,2),15.58,-0.03125);
  assert(noAdditional.goldResult);assert.equal(noAdditional.silverResult,undefined);
+});
+test('silver titrimetric calculation averages selected titration rows', () => {
+ const rows = [[200, 36, 'yes'], [202, 36.3, 'addition'], [0, 0, 'no'], [0, 0, 'no']]
+  .map(([weight, volume, calculation]) => ({ receivedWeightGrams: weight / 1000, outputWeightGrams: volume, calculation }));
+ const result = calculateSilverBullion(rows, 2, { method: 'titrimetric', titerMilligramsPerMilliliter: 5555 });
+ assert.deepEqual(result.errors, []);
+ assert.equal(result.weightEntries[0].silverAssay.toFixed(2), '999.90');
+ assert.equal(result.weightEntries[1].silverAssay.toFixed(2), '998.25');
+ assert.equal(result.silverResult.toFixed(2), '999.00');
+});
+test('silver calculation follows the assay-center worksheet and rounds the final average', () => {
+ const rows = [[201.70, 36.20, 'yes'], [200.11, 35.90, 'yes'], [0, 0, 'no'], [0, 0, 'no']]
+  .map(([weight, volume, calculation]) => ({ receivedWeightGrams: weight / 1000, outputWeightGrams: volume, calculation }));
+ const result = calculateSilverBullion(rows, 3.790, { method: 'titrimetric', titerMilligramsPerMilliliter: 5555 });
+ assert.deepEqual(result.errors, []);
+ assert.equal(result.weightEntries[0].silverAssay.toFixed(2), '996.98');
+ assert.equal(result.weightEntries[1].silverAssay.toFixed(2), '996.57');
+ assert.equal(result.silverResult.toFixed(2), '997.00');
+});
+test('silver rhodanometric calculation uses blank minus endpoint volume', () => {
+ const rows = [{ receivedWeightGrams: 0.2, outputWeightGrams: 4, calculation: 'yes' }];
+ const result = calculateSilverBullion(rows, 0.2, { method: 'rhodanometric', titerMilligramsPerMilliliter: 5000, blankVolumeMilliliters: 44 });
+ assert.deepEqual(result.errors, []);
+ assert.equal(result.weightEntries[0].silverAssay, 1000);
+ assert.equal(result.silverResult, 1000);
+ const withoutBlank = calculateSilverBullion(rows, 0.2, { method: 'rhodanometric', titerMilligramsPerMilliliter: 5000 });
+ assert.deepEqual(withoutBlank.errors, []);
+ assert.equal(withoutBlank.silverResult, 100);
 });

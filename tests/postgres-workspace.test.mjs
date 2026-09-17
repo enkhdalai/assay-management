@@ -49,7 +49,7 @@ test("PostgreSQL routes enforce tenant scope and persist staff and intake audits
   const originalFetch = globalThis.fetch;
   const sqlErrors = [];
   try {
-    for (const migration of ["0000_even_falcon.sql", "0001_flashy_william_stryker.sql", "0002_happy_glorian.sql", "0003_outgoing_gabe_jones.sql", "0004_request_certificates.sql", "0005_annual_certificate_numbers.sql", "0006_batch_registration_numbers.sql", "0007_oval_domino.sql", "0008_customer_assay_center_ownership.sql", "0009_bullion_examination_approval.sql", "0010_integration_publications.sql", "0011_unique_legal_entity_customer.sql", "0012_certificate_signature_evidence.sql", "0013_widen_certificate_signature_status.sql", "0014_customer_legacy_import_fields.sql", "0015_bullion_examination_return_notes.sql", "0016_daily_chemist_assignments.sql"]) {
+    for (const migration of ["0000_even_falcon.sql", "0001_flashy_william_stryker.sql", "0002_happy_glorian.sql", "0003_outgoing_gabe_jones.sql", "0004_request_certificates.sql", "0005_annual_certificate_numbers.sql", "0006_batch_registration_numbers.sql", "0007_oval_domino.sql", "0008_customer_assay_center_ownership.sql", "0009_bullion_examination_approval.sql", "0010_integration_publications.sql", "0011_unique_legal_entity_customer.sql", "0012_certificate_signature_evidence.sql", "0013_widen_certificate_signature_status.sql", "0014_customer_legacy_import_fields.sql", "0015_bullion_examination_return_notes.sql", "0016_daily_chemist_assignments.sql", "0017_multiple_daily_chemist_assignments.sql", "0018_silver_bullion_examination_methods.sql", "0019_silver_bullion_intake_titer.sql"]) {
       await database.exec(await readFile(new URL(`../packages/db/drizzle/${migration}`, import.meta.url), "utf8"));
     }
     // Emulate Neon's HTTP wire format against a disposable PostgreSQL engine.
@@ -125,14 +125,14 @@ test("PostgreSQL routes enforce tenant scope and persist staff and intake audits
     assert.equal(batch.items[0].bullionNo, "0001");
     assert.equal((await (await request(nextPath, le)).json()).nextNumber, "0002");
     const item = batch.items[0];
-    const weights = { status: "draft", items: [{ id: item.id, grossWeightAfterGrams: 99.5, slagWeightGrams: 999 }] };
+    const weights = { status: "draft", items: [{ id: item.id, grossWeightAfterGrams: 99.5, slagWeightGrams: 0.25 }] };
     assert.equal((await request(`/api/v1/bullion/intakes/${batch.id}`, melter, "PATCH", { status: "ready_for_sampling", items: [{ id: item.id }] })).status, 400);
     assert.equal((await request(`/api/v1/bullion/intakes/${batch.id}`, melter, "PATCH", { status: "ready_for_sampling", items: [{ id: item.id, grossWeightAfterGrams: 0 }] })).status, 400);
     assert.equal((await request(`/api/v1/bullion/intakes/${batch.id}`, melter, "PATCH", { status: "ready_for_sampling", items: [{ id: item.id, grossWeightAfterGrams: 101 }] })).status, 409);
     assert.equal((await request(`/api/v1/bullion/intakes/${batch.id}`, foreign, "PATCH", weights)).status, 409);
     assert.equal((await request(`/api/v1/bullion/intakes/${batch.id}`, melter, "PATCH", weights)).status, 200);
     const savedSlag = (await database.query("SELECT slag_weight_grams::float AS slag FROM bullion_intake_items WHERE id = $1", [item.id])).rows[0];
-    assert.equal(savedSlag.slag, 0.5);
+    assert.equal(savedSlag.slag, 0.25);
     assert.equal((await request(`/api/v1/bullion/intakes/${batch.id}`, melter, "PATCH", { ...weights, status: "ready_for_sampling" })).status, 200);
     assert.equal((await request(`/api/v1/bullion/intakes/${batch.id}`, melter, "PATCH", weights)).status, 409);
     const sampling = { status: "sample_taken", items: [{ ...weights.items[0], sampleWeightMilligrams: 2000 }] };
@@ -150,7 +150,8 @@ test("PostgreSQL routes enforce tenant scope and persist staff and intake audits
     }
     assert.equal((await request("/api/v1/bullion/examinations", chemist, "POST", exam)).status, 201);
     const savedExamination = (await (await request("/api/v1/bullion/samples", chemist)).json()).data[0].examination;
-    assert.deepEqual(savedExamination.weightEntries, exam.weightEntries);
+    const serverCalculatedDraftEntries = exam.weightEntries.map(({ goldAssay: _goldAssay, ...entry }) => ({ ...entry, goldAssay: 799.875 }));
+    assert.deepEqual(savedExamination.weightEntries, serverCalculatedDraftEntries);
     await database.query("UPDATE bullion_intake_items SET bullion_no = '0015' WHERE id = $1", [item.id]);
     const managerDraft = (await (await request("/api/v1/bullion/samples", le)).json()).data.find(sample => sample.id === item.id);
     assert.equal(managerDraft.status, "draft");
@@ -158,8 +159,8 @@ test("PostgreSQL routes enforce tenant scope and persist staff and intake audits
     await database.query("UPDATE bullion_intake_items SET bullion_no = '0001' WHERE id = $1", [item.id]);
     assert(Number.isFinite(Date.parse(managerDraft.assignedAt)));
     assert.equal(managerDraft.completedAt, null);
-    assert.deepEqual(managerDraft.examination.weightEntries, exam.weightEntries);
-    assert.equal(managerDraft.examination.goldResult, exam.goldResult);
+    assert.deepEqual(managerDraft.examination.weightEntries, serverCalculatedDraftEntries);
+    assert.equal(managerDraft.examination.goldResult, 799.875);
     assert.equal((await request("/api/v1/bullion/examinations", chemist, "POST", exam)).status, 409);
     const calculatedInput = { ...exam, expectedRevision: 1, calculationVersion: 'fire-assay-v1', goldResult: 1, silverResult: 1,
       weightEntries: [[248.27,196.64,'yes'],[248.99,197.27,'yes'],[249.85,246.23,'addition']].map(([a,b,calculation])=>({receivedWeightGrams:a/1000,outputWeightGrams:b/1000,calculation,goldAssay:1})),
@@ -197,7 +198,7 @@ test("PostgreSQL routes enforce tenant scope and persist staff and intake audits
     await database.query("INSERT INTO customer_organization_profiles (customer_id, mine_initial_number) VALUES ($1, '4829') ON CONFLICT (customer_id) DO UPDATE SET mine_initial_number = EXCLUDED.mine_initial_number", [customer.id]);
     assert.equal((await (await request(nextPath, melter)).json()).nextNumber, "0002");
     const concurrent = await Promise.all([1, 2].map(() => request("/api/v1/bullion/intakes", melter, "POST", {
-      customerId: customer.id, metal: "silver", initialBullionNumber: "1",
+      customerId: customer.id, metal: "silver", initialBullionNumber: "1", silverTiter: 5555,
       items: [{ bullionNo: "999", grossWeightBeforeGrams: 50 }, { bullionNo: "999", grossWeightBeforeGrams: 60 }],
     })));
     const allocated = await Promise.all(concurrent.map(async (response) => {
@@ -288,9 +289,22 @@ test("PostgreSQL routes enforce tenant scope and persist staff and intake audits
     exam.silverResult = 193.35;
     exam.measurementEntries = [1500, 250, 100, 650].map((reading, index) => ({ label: String(index), reading }));
     assert.equal((await request(`/api/v1/bullion/samples/${first.id}/print`, replacement, "POST", {})).status, 403);
-    assert.equal((await request("/api/v1/bullion/examinations", replacement, "POST", { ...exam, bullionItemId: first.id, status: "submitted" })).status, 201);
+    const submittedWeightEntries = exam.weightEntries.slice(0, 3).map((entry, index) => index === 2 ? { ...entry, calculation: "addition" } : entry);
+    const submittedExam = { ...exam, status: "submitted", weightEntries: submittedWeightEntries };
+    assert.equal((await request("/api/v1/bullion/examinations", replacement, "POST", { ...submittedExam, bullionItemId: first.id })).status, 201);
     const chemistAfterSubmit = (await (await request("/api/v1/bullion/samples", replacement)).json()).data;
     assert(!chemistAfterSubmit.some((sample) => sample.id === first.id));
+    const examinationDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ulaanbaatar", year: "numeric", month: "2-digit", day: "2-digit" })
+      .formatToParts(new Date()).reduce((value, part) => ({ ...value, [part.type]: part.value }), {});
+    const historyDate = `${examinationDate.year}-${examinationDate.month}-${examinationDate.day}`;
+    const chemistHistory = await request(`/api/v1/bullion/samples/history?date=${historyDate}`, replacement);
+    assert.equal(chemistHistory.status, 200);
+    const historySamples = (await chemistHistory.json()).data;
+    assert(historySamples.some((sample) => sample.id === first.id && sample.status === "submitted"));
+    const historyDates = (await (await request("/api/v1/bullion/samples/history/dates", replacement)).json()).data;
+    assert(historyDates.includes(historyDate));
+    assert.equal((await request(`/api/v1/bullion/samples/history?date=not-a-date`, replacement)).status, 400);
+    assert.equal((await request(`/api/v1/bullion/samples/history?date=${historyDate}`, le)).status, 403);
     const managerAfterSubmit = (await (await request("/api/v1/bullion/samples", le)).json()).data;
     assert.equal(managerAfterSubmit.find((sample) => sample.id === first.id).status, "submitted");
     const completedSample = managerAfterSubmit.find(sample => sample.id === first.id);
@@ -299,15 +313,16 @@ test("PostgreSQL routes enforce tenant scope and persist staff and intake audits
     const storedTiming = (await database.query("SELECT i.assigned_at, e.submitted_at FROM bullion_intake_items i JOIN bullion_examination_revisions e ON e.bullion_item_id = i.id WHERE i.id = $1 ORDER BY e.revision_no DESC LIMIT 1", [first.id])).rows[0];
     assert.equal(Date.parse(completedSample.assignedAt), new Date(storedTiming.assigned_at).getTime());
     assert.equal(Date.parse(completedSample.completedAt), new Date(storedTiming.submitted_at).getTime());
-    assert.deepEqual(managerAfterSubmit.find(sample => sample.id === first.id).examination.weightEntries, exam.weightEntries);
-    assert.equal(managerAfterSubmit.find(sample => sample.id === first.id).examination.goldResult, exam.goldResult);
+    const submittedServerEntries = submittedWeightEntries.map(({ goldAssay: _goldAssay, ...entry }) => ({ ...entry, goldAssay: 800 }));
+    assert.deepEqual(managerAfterSubmit.find(sample => sample.id === first.id).examination.weightEntries, submittedServerEntries);
+    assert.equal(managerAfterSubmit.find(sample => sample.id === first.id).examination.goldResult, 800);
     assert.equal((await request(assignmentPath, le, "PATCH", { ...reassignment, chemistId: oldActor.id, expectedChemistId: replacement.id })).status, 409);
     assert.equal((await request("/api/v1/bullion/examinations", le, "POST", { ...exam, bullionItemId: first.id })).status, 403);
     assert.equal((await database.query("SELECT count(*)::int AS count FROM bullion_certificates")).rows[0].count, 0);
     const remainingSamples = (await database.query("SELECT id, assigned_chemist_id FROM bullion_intake_items WHERE batch_id = $1 AND id <> $2 ORDER BY sequence_no", [eightBatch.id, first.id])).rows;
     for (const row of remainingSamples) {
       const actor = chemists.find(actor => actor.id === row.assigned_chemist_id);
-      assert.equal((await request("/api/v1/bullion/examinations", actor, "POST", { ...exam, bullionItemId: row.id, status: "submitted" })).status, 201);
+      assert.equal((await request("/api/v1/bullion/examinations", actor, "POST", { ...submittedExam, bullionItemId: row.id })).status, 201);
     }
     const beforeApproval = await request(`/api/v1/bullion/batches/${eightBatch.id}/finalize`, le, "POST", {});
     assert.equal(beforeApproval.status, 409);
@@ -388,7 +403,7 @@ test("PostgreSQL routes enforce tenant scope and persist staff and intake audits
           items: [{ bullionNo: "", grossWeightBeforeGrams: 100, grossWeightAfterGrams: 99, sampleWeightMilligrams: 2000 }] })).json()).record;
         if (intake.items[0].bullionNo === "0001") assert.equal(intake.publicId, firstRegistrationNo);
         const id = intake.items[0].id;
-        assert.equal((await request("/api/v1/bullion/examinations", analyst, "POST", { ...exam, bullionItemId: id, status: "submitted" })).status, 201);
+        assert.equal((await request("/api/v1/bullion/examinations", analyst, "POST", { ...submittedExam, bullionItemId: id })).status, 201);
         assert.equal((await request(`/api/v1/bullion/samples/${id}/approve`, manager, "POST", {})).status, 200);
         return { batchId: intake.id, itemId: id };
       }

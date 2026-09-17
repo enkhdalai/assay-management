@@ -96,7 +96,11 @@ test("melter intake, LE sampling, anonymous chemistry, and reports respect cente
   assert.equal(samples[0].sampleWeightMilligrams, 2000);
   assert.doesNotMatch(JSON.stringify(samples), /Private Mining|customer|bullionNo|receivedBy|99112233|private@example/);
   assert.equal((await (await request("/api/v1/bullion/samples", foreignChemist.cookie)).json()).data.length, 0);
-  const examination = { bullionItemId: itemId, examinationNo: samples[0].analysisNo, expectedRevision: 0, sampleWeightGrams: 2, delta: -0.03125, status: "draft", weightEntries: [], measurementEntries: [], goldResult: 792.04 };
+  const examination = { bullionItemId: itemId, examinationNo: samples[0].analysisNo, expectedRevision: 0, sampleWeightGrams: 2, delta: -0.03125, status: "draft", measurementEntries: [], goldResult: 792.04,
+    weightEntries: [
+      { receivedWeightGrams: 0.25, outputWeightGrams: 0.2, calculation: "yes" },
+      { receivedWeightGrams: 0.25, outputWeightGrams: 0.21, calculation: "addition" },
+    ] };
   assert.equal((await request("/api/v1/bullion/examinations", foreignChemist.cookie, "POST", examination)).status, 404);
   const competing = await Promise.all([request("/api/v1/bullion/examinations", chemist.cookie, "POST", examination), request("/api/v1/bullion/examinations", chemist.cookie, "POST", examination)]);
   assert.deepEqual(competing.map((response) => response.status).sort(), [201, 409]);

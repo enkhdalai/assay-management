@@ -1,11 +1,12 @@
 "use client";
 
-export function CalendarDateInput({ name, defaultValue, id }: { name: string; defaultValue: string; id?: string }) {
-  return <input id={id} name={name} type="date" required defaultValue={defaultValue}
+export function CalendarDateInput({ name, defaultValue, id, value, onChange, disabled = false }: {
+  name: string; defaultValue?: string; id?: string; value?: string; onChange?: (value: string) => void; disabled?: boolean;
+}) {
+  return <input id={id} name={name} type="date" required defaultValue={defaultValue} value={value} disabled={disabled}
     className="calendar-date-input" inputMode="none"
     onClick={(event) => {
       if (typeof event.currentTarget.showPicker === "function") {
-        event.preventDefault();
         event.currentTarget.showPicker();
       }
     }}
@@ -17,5 +18,6 @@ export function CalendarDateInput({ name, defaultValue, id }: { name: string; de
     onBeforeInput={(event) => event.preventDefault()}
     onPaste={(event) => event.preventDefault()}
     onDrop={(event) => event.preventDefault()}
+    onChange={(event) => onChange?.(event.currentTarget.value)}
   />;
 }

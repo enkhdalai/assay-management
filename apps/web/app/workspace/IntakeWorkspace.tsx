@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { createPortal } from "react-dom";
 import { BadgeCheck, ClipboardCheck, FlaskConical, Minus, PackageCheck, Plus, RefreshCw, UsersRound } from "lucide-react";
 import type { AnonymousSample, BullionIntakeBatchRecord, CreateBullionIntakeInput } from "../../../../packages/shared/src";
 import { CreateCustomerDialog } from "../CustomerComponents";
@@ -14,12 +15,12 @@ import { CustomerCombobox, type IntakeCustomerOption } from "./CustomerCombobox"
 type CustomerOption = IntakeCustomerOption;
 type WeightRow = { id?: string; bullionNo: string; before: string; after: string; slag: string; sample: string };
 type DailyChemist = { id: string; fullName: string; status: string; onVacation: boolean };
-type DailyChemistSchedule = { date: string; goldChemistId: string | null; silverChemistId: string | null; chemists: DailyChemist[] };
+type DailyChemistSchedule = { date: string; goldChemistIds: string[]; silverChemistIds: string[]; chemists: DailyChemist[] };
 const newRow = (): WeightRow => ({ bullionNo: "", before: "", after: "", slag: "", sample: "" });
 const optional = (value: string) => value.trim() === "" ? undefined : Number(value);
-const slagValue = (row: WeightRow) => row.before.trim() && row.after.trim()
-  && Number.isFinite(Number(row.before)) && Number.isFinite(Number(row.after))
-  ? String(Number((Number(row.before) - Number(row.after)).toFixed(4))) : "";
+const lossValue = (row: WeightRow) => row.before.trim() && row.after.trim()
+  && Number.isFinite(Number(row.before)) && Number.isFinite(Number(row.after)) && Number.isFinite(optional(row.slag) ?? 0)
+  ? String(Number((Number(row.before) - Number(row.after) - (optional(row.slag) ?? 0)).toFixed(4))) : "";
 const intakeStatus = (status: BullionIntakeBatchRecord["status"]) => status === "sample_taken" ? "Дээж илгээсэн" : status === "ready_for_sampling" ? "Эрхлэгчид илгээсэн" : "Хүлээн авалт / хайлалт";
 const examinationNumber = (value?: string) => value ? value.padStart(4, "0") : "-";
 const bullionNumber = (firstNumber: string, offset = 0) => {
@@ -83,15 +84,15 @@ export function IntakeWorkspace({ manager }: { manager: boolean }) {
     if (tracking) await openTracking(tracking.batch.id);
   }, [openTracking, tracking]);
   const filtered = batches.filter((batch) => `${batch.publicId} ${batch.customerName} ${batch.items.map((item) => item.bullionNo).join(" ")}`.toLowerCase().includes(search.trim().toLowerCase()));
+  const headerActions = typeof document === "undefined" ? null : document.getElementById("intake-header-actions");
   return <section className="workspace-section">
+    {headerActions && createPortal(<><button type="button" className="secondary-button" onClick={() => setCreatingCustomer(true)}>Харилцагч нэмэх</button>{manager && <button type="button" className="secondary-button" onClick={() => setDailyChemistScheduleOpen(true)}><UsersRound size={18} aria-hidden="true" />Өнөөдрийн химич</button>}</>, headerActions)}
     <div className="workspace-toolbar"><input aria-label="Бүртгэл хайх" placeholder="Дугаар, харилцагчаар хайх" value={search} onChange={(event) => setSearch(event.target.value)} />
       <button type="button" className="secondary-button intake-refresh-button" aria-label="Шинэчлэх" title="Шинэчлэх" disabled={loading} onClick={refresh}><RefreshCw size={20} aria-hidden="true" /></button>
-      <button type="button" className="secondary-button" onClick={() => setCreatingCustomer(true)}>Харилцагч нэмэх</button>
-      {manager && <button type="button" className="secondary-button" onClick={() => setDailyChemistScheduleOpen(true)}><UsersRound size={18} aria-hidden="true" />Өнөөдрийн химич</button>}
       <button type="button" className="primary-button" onClick={() => setEditing("gold")}>Алтан гулдмай бүртгэх</button>
       <button type="button" className="primary-button" onClick={() => setEditing("silver")}>Мөнгөн гулдмай бүртгэх</button></div>
     {error && <p role="alert" className="login-error">{error}</p>}
-    {loading ? <WorkspaceLoadingSkeleton /> : <div className="workspace-table-scroll"><table className="workspace-table"><thead><tr><th>Бүртгэл №</th><th>Харилцагч</th><th>Огноо</th><th>Металл</th><th>Гулдмай</th><th>Бүртгэсэн ажилтан</th><th>Төлөв</th></tr></thead><tbody>{filtered.map((batch) => <tr key={batch.id} className="intake-batch-row" tabIndex={0} onClick={() => setEditing(batch)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setEditing(batch); } }} aria-label={`${batch.publicId} бүртгэлийн дэлгэрэнгүй`}><td><strong className="registration-number">{batch.publicId}</strong></td><td>{batch.customerName}</td><td>{intakeDate(batch.receivedAt || batch.createdAt)}</td><td>{batch.metal === "gold" ? "Алт" : "Мөнгө"}</td><td>{batch.pieceCount}</td><td>{batch.receivedByName || "-"}</td><td><button type="button" className="secondary-button intake-status-button" disabled={openingTrackingId === batch.id} onClick={(event) => { event.stopPropagation(); void openTracking(batch.id); }} onKeyDown={(event) => event.stopPropagation()}>{openingTrackingId === batch.id ? "Уншиж байна..." : intakeStatus(batch.status)}</button></td></tr>)}</tbody></table>{filtered.length === 0 && <p>Бүртгэл олдсонгүй.</p>}</div>}
+    {loading ? <WorkspaceLoadingSkeleton /> : <div className="workspace-table-scroll"><table className="workspace-table"><thead><tr><th>Бүртгэл №</th><th>Харилцагч</th><th>Огноо</th><th>Металл</th><th>Гулдмайн тоо</th><th>Бүртгэсэн ажилтан</th><th>Төлөв</th></tr></thead><tbody>{filtered.map((batch) => <tr key={batch.id} className="intake-batch-row" tabIndex={0} onClick={() => setEditing(batch)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setEditing(batch); } }} aria-label={`${batch.publicId} бүртгэлийн дэлгэрэнгүй`}><td><strong className="registration-number">{batch.publicId}</strong></td><td>{batch.customerName}</td><td>{intakeDate(batch.receivedAt || batch.createdAt)}</td><td>{batch.metal === "gold" ? "Алт" : "Мөнгө"}</td><td>{batch.pieceCount}</td><td>{batch.receivedByName || "-"}</td><td><button type="button" className="secondary-button intake-status-button" disabled={openingTrackingId === batch.id} onClick={(event) => { event.stopPropagation(); void openTracking(batch.id); }} onKeyDown={(event) => event.stopPropagation()}>{openingTrackingId === batch.id ? "Уншиж байна..." : intakeStatus(batch.status)}</button></td></tr>)}</tbody></table>{filtered.length === 0 && <p>Бүртгэл олдсонгүй.</p>}</div>}
     {editing && <IntakeDialog key={typeof editing === "string" ? editing : editing.id} batch={typeof editing === "string" ? null : editing} initialMetal={typeof editing === "string" ? editing : editing.metal} customers={customers} manager={manager} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); void refresh(); }} />}
     {tracking && <AssignmentDialog batch={tracking.batch} samples={tracking.samples} manager={manager} onClose={() => setTracking(null)} onSaved={refreshTracking} />}
     {creatingCustomer && <CreateCustomerDialog onClose={() => setCreatingCustomer(false)} onCreated={(customer) => { setCustomers((current) => [...current, { ...customer, registrationNumber: customer.registrationNumberMasked, province: customer.province ?? null, district: customer.district ?? null, origin: null }]); setCreatingCustomer(false); }} />}
@@ -99,11 +100,11 @@ export function IntakeWorkspace({ manager }: { manager: boolean }) {
   </section>;
 }
 
-function DailyChemistScheduleDialog({ onClose }: { onClose(): void }) {
+export function DailyChemistScheduleDialog({ onClose }: { onClose(): void }) {
   const [date, setDate] = useState(centerToday);
   const [schedule, setSchedule] = useState<DailyChemistSchedule | null>(null);
-  const [goldChemistId, setGoldChemistId] = useState<string | null>(null);
-  const [silverChemistId, setSilverChemistId] = useState<string | null>(null);
+  const [goldChemistIds, setGoldChemistIds] = useState<string[]>([]);
+  const [silverChemistIds, setSilverChemistIds] = useState<string[]>([]);
   const [vacationChemistIds, setVacationChemistIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -114,7 +115,7 @@ function DailyChemistScheduleDialog({ onClose }: { onClose(): void }) {
     void api<{ data: DailyChemistSchedule }>(`/api/v1/bullion/intakes/daily-chemist-assignment?date=${encodeURIComponent(date)}`, { cache: "no-store" })
       .then(({ data }) => {
         if (!active) return;
-        setSchedule(data); setGoldChemistId(data.goldChemistId); setSilverChemistId(data.silverChemistId);
+        setSchedule(data); setGoldChemistIds(data.goldChemistIds); setSilverChemistIds(data.silverChemistIds);
         setVacationChemistIds(data.chemists.filter((chemist) => chemist.onVacation).map((chemist) => chemist.id));
       })
       .catch((error) => { if (active) setError((error as Error).message); })
@@ -125,34 +126,41 @@ function DailyChemistScheduleDialog({ onClose }: { onClose(): void }) {
     setVacationChemistIds((current) => {
       const next = current.includes(chemistId) ? current.filter((id) => id !== chemistId) : [...current, chemistId];
       if (next.includes(chemistId)) {
-        if (goldChemistId === chemistId) setGoldChemistId(null);
-        if (silverChemistId === chemistId) setSilverChemistId(null);
+        setGoldChemistIds((current) => current.filter((id) => id !== chemistId));
+        setSilverChemistIds((current) => current.filter((id) => id !== chemistId));
       }
       return next;
     });
+  };
+  const toggleChemist = (chemistId: string, metal: "gold" | "silver") => {
+    const update = metal === "gold" ? setGoldChemistIds : setSilverChemistIds;
+    update((current) => current.includes(chemistId) ? current.filter((id) => id !== chemistId) : [...current, chemistId]);
   };
   const eligible = schedule?.chemists.filter((chemist) => chemist.status === "active" && !vacationChemistIds.includes(chemist.id)) ?? [];
   async function save() {
     setSaving(true); setError("");
     try {
-      await api("/api/v1/bullion/intakes/daily-chemist-assignment", { method: "PUT", body: JSON.stringify({ date, goldChemistId, silverChemistId, vacationChemistIds }) });
+      await api("/api/v1/bullion/intakes/daily-chemist-assignment", { method: "PUT", body: JSON.stringify({ date, goldChemistIds, silverChemistIds, vacationChemistIds }) });
       onClose();
     } catch (error) { setError((error as Error).message); } finally { setSaving(false); }
   }
-  return <WorkspaceDialog title="Өдрийн химичийн хуваарь" onClose={() => { if (!saving) onClose(); }}>
+  return <WorkspaceDialog title="Химичийн өнөөдрийн хуваарь" onClose={() => { if (!saving) onClose(); }}>
     <div className="daily-chemist-schedule">
-      <label>Огноо<input type="date" value={date} disabled={saving} onChange={(event) => setDate(event.target.value)} /></label>
+      <div className="daily-chemist-date"><span>Огноо:</span><CalendarDateInput name="daily-chemist-date" value={date} disabled={saving} onChange={setDate} /></div>
       {loading ? <WorkspaceLoadingSkeleton rows={3} /> : <>
-        <div className="daily-chemist-defaults">
-          <label>Алтан гулдмай<select value={goldChemistId ?? ""} disabled={saving} onChange={(event) => setGoldChemistId(event.target.value || null)}><option value="">Химич сонгохгүй</option>{eligible.map((chemist) => <option key={chemist.id} value={chemist.id}>{chemist.fullName}</option>)}</select></label>
-          <label>Мөнгөн гулдмай<select value={silverChemistId ?? ""} disabled={saving} onChange={(event) => setSilverChemistId(event.target.value || null)}><option value="">Химич сонгохгүй</option>{eligible.map((chemist) => <option key={chemist.id} value={chemist.id}>{chemist.fullName}</option>)}</select></label>
-        </div>
-        <div className="daily-chemist-roster" role="list" aria-label="Химичдийн жагсаалт">
-          {schedule?.chemists.map((chemist) => <label key={chemist.id} className={vacationChemistIds.includes(chemist.id) ? "is-on-vacation" : ""}>
-            <span><strong>{chemist.fullName}</strong><small>{chemist.status === "active" ? "Идэвхтэй" : "Идэвхгүй"}</small></span>
-            <span className="daily-chemist-vacation"><input type="checkbox" checked={vacationChemistIds.includes(chemist.id)} disabled={saving || chemist.status !== "active"} onChange={() => toggleVacation(chemist.id)} />Амралттай</span>
-          </label>)}
-          {!schedule?.chemists.length && <p>Бүртгэлтэй химич алга байна.</p>}
+        <div className="daily-chemist-panels">
+          <div className="daily-chemist-defaults">
+            <fieldset><legend>Алтан гулдмай</legend>{eligible.map((chemist) => <label key={chemist.id}><input type="checkbox" checked={goldChemistIds.includes(chemist.id)} disabled={saving} onChange={() => toggleChemist(chemist.id, "gold")} />{chemist.fullName}</label>)}{!eligible.length && <span>Сонгох боломжтой химич алга байна.</span>}</fieldset>
+            <fieldset><legend>Мөнгөн гулдмай</legend>{eligible.map((chemist) => <label key={chemist.id}><input type="checkbox" checked={silverChemistIds.includes(chemist.id)} disabled={saving} onChange={() => toggleChemist(chemist.id, "silver")} />{chemist.fullName}</label>)}{!eligible.length && <span>Сонгох боломжтой химич алга байна.</span>}</fieldset>
+          </div>
+          <fieldset className="daily-chemist-roster" role="list" aria-label="Амралттай химичид">
+            <legend>Амралттай химичид</legend>
+            {schedule?.chemists.map((chemist) => <label key={chemist.id} className={vacationChemistIds.includes(chemist.id) ? "is-on-vacation" : ""}>
+              <span><strong>{chemist.fullName}</strong><small>{chemist.status === "active" ? "Идэвхтэй" : "Идэвхгүй"}</small></span>
+              <span className="daily-chemist-vacation"><input type="checkbox" checked={vacationChemistIds.includes(chemist.id)} disabled={saving || chemist.status !== "active"} onChange={() => toggleVacation(chemist.id)} />Амралттай</span>
+            </label>)}
+            {!schedule?.chemists.length && <p>Бүртгэлтэй химич алга байна.</p>}
+          </fieldset>
         </div>
       </>}
       {error && <p className="login-error" role="alert">{error}</p>}
@@ -173,7 +181,8 @@ function AssignmentDialog({ batch, samples, manager, onClose, onSaved }: {
           id: item.id, batchId: batch.id, bullionNo: item.bullionNo ?? "", analysisNo: item.analysisNo ?? "",
           metal: batch.metal, receivedAt: batch.receivedAt ?? batch.createdAt,
           sampleWeightMilligrams: item.sampleWeightMilligrams ?? 0, delta: batch.delta ?? 0,
-          revisionNo: 0, status: "draft", examination: null,
+          revisionNo: samples.find((sample) => sample.id === item.id)?.revisionNo ?? 0,
+          status: samples.find((sample) => sample.id === item.id)?.status ?? "pending", examination: null,
           assignedChemistId: item.assignedChemistId, assignedChemistName: item.assignedChemistName, assignedAt: item.assignedAt,
         }} onSaved={onSaved} /> : item.assignedChemistName || (batch.status === "sample_taken" ? "Химич хуваарилаагүй" : batch.status === "ready_for_sampling" ? "Лабораторийн эрхлэгч хүлээн авна" : "Хайлалт хүлээгдэж байна")}</td>
         <td>{assignmentDate(item.assignedAt)}</td></tr>)}</tbody>
@@ -186,14 +195,15 @@ function BatchWorkflowTimeline({ batch, samples }: { batch: BullionIntakeBatchRe
   const hasAllSamples = matchedSamples.length === batch.items.length && batch.items.length > 0;
   const allSubmitted = hasAllSamples && matchedSamples.every((sample) => sample.status === "submitted" || sample.status === "approved");
   const allApproved = hasAllSamples && matchedSamples.every((sample) => sample.status === "approved");
-  const signed = matchedSamples.some((sample) => sample.certificateSignatureStatus === "signed" || sample.certificateSignatureStatus === "cryptographically_verified");
+  const signed = hasAllSamples && matchedSamples.every((sample) => sample.certificateSignatureStatus === "signed" || sample.certificateSignatureStatus === "cryptographically_verified");
   const handoffComplete = batch.status === "sample_taken";
-  const currentStep = signed ? 4 : allSubmitted ? 4 : handoffComplete ? 3 : 2;
+  const currentStep = signed ? 5 : allApproved ? 5 : allSubmitted ? 4 : handoffComplete ? 3 : 2;
   const steps = [
     { title: "Бүртгэл", detail: "Металл хүлээн авсан", icon: PackageCheck, state: "complete" },
     { title: "Дээж авах", detail: "Химичид хуваарилсан", icon: ClipboardCheck, state: handoffComplete ? "complete" : currentStep === 2 ? "current" : "pending" },
     { title: "Шинжилгээ", detail: "Химич дүн илгээх", icon: FlaskConical, state: allSubmitted ? "complete" : currentStep === 3 ? "current" : "pending" },
-    { title: "Баталгаажуулалт", detail: "LE баталж, eSign зурна", icon: BadgeCheck, state: signed ? "complete" : currentStep === 4 ? "current" : "pending" },
+    { title: "Лабораторын эрхлэгчийн хяналт", detail: "Химичийн дүнг батлах", icon: BadgeCheck, state: allApproved ? "complete" : currentStep === 4 ? "current" : "pending" },
+    { title: "Тоон гарын үсэг", detail: "Лабораторын эрхлэгч eSign зурж, Монголбанкинд илгээх", icon: BadgeCheck, state: signed ? "complete" : currentStep === 5 ? "current" : "pending" },
   ] as const;
   return <ol className="batch-workflow-timeline" aria-label="Гулдмайн ажлын явц">
     {steps.map((step, index) => {
@@ -254,29 +264,32 @@ export function IntakeDialog({ batch, initialMetal = "gold", customers, manager,
     }
     try {
       if (batch) {
-        await api(`/api/v1/bullion/intakes/${batch.id}`, { method: "PATCH", body: JSON.stringify({ status, items: rows.map((row) => ({ id: row.id, grossWeightAfterGrams: optional(row.after), slagWeightGrams: optional(slagValue(row)), ...(manager ? { sampleWeightMilligrams: optional(row.sample) } : {}) })) }) });
+        await api(`/api/v1/bullion/intakes/${batch.id}`, { method: "PATCH", body: JSON.stringify({ status, items: rows.map((row) => ({ id: row.id, grossWeightAfterGrams: optional(row.after), slagWeightGrams: optional(row.slag), ...(manager ? { sampleWeightMilligrams: optional(row.sample) } : {}) })) }) });
       } else {
-        const input: CreateBullionIntakeInput = { customerId, metal: metal === "silver" ? "silver" : "gold", receivedAt: String(form.get("receivedAt")), branchName: String(form.get("branchName") || ""), province: String(form.get("province") || ""), district: String(form.get("district") || ""), dispatchReference: String(form.get("origin") || ""), delta: Number(form.get("delta")), status,
-          items: rows.map((row) => ({ bullionNo: row.bullionNo.trim(), grossWeightBeforeGrams: Number(row.before), grossWeightAfterGrams: optional(row.after), slagWeightGrams: optional(slagValue(row)), ...(manager ? { sampleWeightMilligrams: optional(row.sample) } : {}) })) };
+        const input: CreateBullionIntakeInput = { customerId, metal: metal === "silver" ? "silver" : "gold", receivedAt: String(form.get("receivedAt")), branchName: String(form.get("branchName") || ""), province: String(form.get("province") || ""), district: String(form.get("district") || ""), dispatchReference: String(form.get("origin") || ""), delta: metal === "silver" ? 0 : Number(form.get("delta")), silverTiter: metal === "silver" ? Number(form.get("silverTiter")) : undefined, status,
+          items: rows.map((row) => ({ bullionNo: row.bullionNo.trim(), grossWeightBeforeGrams: Number(row.before), grossWeightAfterGrams: optional(row.after), slagWeightGrams: optional(row.slag), ...(manager ? { sampleWeightMilligrams: optional(row.sample) } : {}) })) };
         await api("/api/v1/bullion/intakes", { method: "POST", body: JSON.stringify(input) });
       }
       onSaved();
     } catch (error) { setError((error as Error).message); } finally { setSaving(false); }
   }
-  return <WorkspaceDialog title={metal === "silver" ? "Мөнгөн гулдмайн дээж авах" : "Алтан гулдмайн дээж авах"} onClose={() => { if (!saving) onClose(); }}>
+  return <WorkspaceDialog title={metal === "silver" ? "Мөнгөн гулдмайн дээж авах" : "Алтан гулдмайн дээж авах"} onClose={() => { if (!saving) onClose(); }} headerActions={batch ? <span className="intake-registration-summary"><span className="intake-registration-person">Бүртгэсэн: {batch.receivedByName || "-"}</span><time>{assignmentDate(batch.createdAt)}</time></span> : undefined}>
     <form onSubmit={submit} className="workspace-form"><fieldset disabled={saving || locked}>
       {!batch && <div className="workspace-form-grid">
         <label htmlFor="intake-date">Огноо<CalendarDateInput id="intake-date" name="receivedAt" defaultValue={new Date().toISOString().slice(0, 10)} /></label>
         <label htmlFor="intake-customer">Харилцагч байгууллага<CustomerCombobox inputId="intake-customer" customers={customers} value={customerId} onChange={(customer) => { setSequence(null); setCustomerId(customer?.id ?? ""); setLocation({ province: customer?.province ?? "", district: customer?.district ?? "", origin: customer?.origin ?? "" }); }} /></label>
         <label>Гулдмайн эхлэх дугаар<input className="intake-auto-number" readOnly aria-readonly="true" value={startNumber} placeholder={customerId && !startNumber ? "Ачаалж байна..." : ""} /></label>
-        <div className="intake-secondary-fields"><label>Салбар байгууллага<input name="branchName" maxLength={255} /></label><label>Тоо ширхэг<input type="number" min="1" max="100" step="1" value={rows.length} onChange={(event) => changeQuantity(event.target.value)} /></label><label>Делта<input className="intake-auto-number" name="delta" type="number" step="0.000001" readOnly aria-readonly="true" defaultValue="-0.03125" required /></label></div>
+        <div className="intake-secondary-fields"><label>Салбар байгууллага<input name="branchName" maxLength={255} /></label><label>Тоо ширхэг<input type="number" min="1" max="100" step="1" value={rows.length} onChange={(event) => changeQuantity(event.target.value)} /></label>{metal === "silver" ? <label>Титр<input className="intake-auto-number" name="silverTiter" type="number" step="0.01" readOnly aria-readonly="true" defaultValue="5555.00" required /></label> : <label>Делта<input className="intake-auto-number" name="delta" type="number" step="0.000001" readOnly aria-readonly="true" defaultValue="-0.03125" required /></label>}</div>
         <div className="intake-location-fields"><label>Аймаг, хот<input name="province" maxLength={120} value={location.province} onChange={(event) => setLocation((current) => ({ ...current, province: event.target.value }))} /></label><label>Сум, дүүрэг<input name="district" maxLength={120} value={location.district} onChange={(event) => setLocation((current) => ({ ...current, district: event.target.value }))} /></label><label>Гарал, үүсэл<input name="origin" maxLength={120} value={location.origin} onChange={(event) => setLocation((current) => ({ ...current, origin: event.target.value }))} /></label></div>
       </div>}
       {batch && <div className="workspace-form-grid"><label>Харилцагч байгууллага<input readOnly value={batch.customerName} /></label><label>Гулдмайн эхлэх дугаар<input className="intake-auto-number" readOnly aria-readonly="true" value={batch.initialBullionNumber || "-"} /></label><label>Тоо ширхэг<input readOnly value={rows.length} /></label></div>}
-      <div className="workspace-table-scroll"><table className="workspace-table weight-table"><thead><tr><th rowSpan={2}>Шинжилгээний №</th><th rowSpan={2}>Гулдмайн №</th><th colSpan={2}>Хайлалтын жин /гр/</th><th rowSpan={2}>Шлак /гр/</th>{manager && <th rowSpan={2}>Дээжийн жин /мг/</th>}{!batch && <th rowSpan={2}>Үйлдэл</th>}</tr><tr><th>Өмнөх</th><th>Дараах</th></tr></thead><tbody>{rows.map((row, index) => <tr key={row.id || index}>
+      <div className="workspace-table-scroll"><table className="workspace-table weight-table"><thead><tr><th rowSpan={2}>Шинжилгээний №</th><th rowSpan={2}>Гулдмайн №</th><th colSpan={2}>Хайлалтын жин /гр/</th><th rowSpan={2}>Шлак /гр/</th><th rowSpan={2}>Хорогдол /гр/</th>{manager && <th rowSpan={2}>Дээжийн жин /мг/</th>}{!batch && <th rowSpan={2}>Үйлдэл</th>}</tr><tr><th>Өмнөх</th><th>Дараах</th></tr></thead><tbody>{rows.map((row, index) => <tr key={row.id || index}>
         <td><input aria-label={`Шинжилгээ ${index + 1} дугаар`} readOnly value={batch?.items[index]?.analysisNo || ""} placeholder="Автомат" /></td>
         <td><input className="intake-auto-number" aria-label={`Гулдмай ${index + 1} дугаар`} readOnly aria-readonly="true" value={batch ? row.bullionNo : bullionNumber(startNumber, index)} /></td>
-        {(["before", "after", "slag", ...(manager ? ["sample"] : [])] as const).map((field) => <td key={field}><input aria-label={`${index + 1} ${field}`} type="number" min={field === "before" || field === "sample" || field === "after" ? "0.0001" : "0"} max={field === "after" && row.before ? Number(row.before) : undefined} step="0.0001" required={field === "before"} readOnly={field === "slag" || (field === "before" && !!batch)} data-calculated={field === "slag" || undefined} value={field === "slag" ? slagValue(row) : row[field as keyof WeightRow] || ""} onChange={(event) => update(index, field as keyof WeightRow, event.target.value)} /></td>)}
+        {(["before", "after"] as const).map((field) => <td key={field}><input aria-label={`${index + 1} ${field}`} type="number" min="0.0001" max={field === "after" && row.before ? Number(row.before) : undefined} step="0.0001" required={field === "before"} readOnly={field === "before" && !!batch} value={row[field] || ""} onChange={(event) => update(index, field, event.target.value)} /></td>)}
+        <td><input aria-label={`${index + 1} Шлак`} type="number" min="0" max={row.before && row.after ? Math.max(0, Number(row.before) - Number(row.after)) : undefined} step="0.0001" value={row.slag} onChange={(event) => update(index, "slag", event.target.value)} /></td>
+        <td><input aria-label={`${index + 1} Хорогдол`} type="number" readOnly data-calculated value={lossValue(row)} /></td>
+        {manager && <td><input aria-label={`${index + 1} sample`} type="number" min="0.0001" step="0.0001" value={row.sample || ""} onChange={(event) => update(index, "sample", event.target.value)} /></td>}
         {!batch && <td className="weight-row-action"><div className="weight-row-actions">{index === rows.length - 1 && <button type="button" className="weight-row-icon-button" aria-label="Гулдмай нэмэх" title="Гулдмай нэмэх" disabled={rows.length >= 100} onClick={() => setRows((current) => [...current, newRow()])}><Plus aria-hidden="true" size={18} /></button>}{index > 0 && <button type="button" className="weight-row-icon-button weight-row-remove-button" aria-label="Гулдмай хасах" title="Гулдмай хасах" onClick={() => setRows((current) => current.filter((_, rowIndex) => rowIndex !== index))}><Minus aria-hidden="true" size={18} /></button>}</div></td>}
       </tr>)}</tbody></table></div>
       {!locked && <div className="workspace-toolbar intake-form-actions"><button className="primary-button" type="submit" value="draft" disabled={!batch && !startNumber}>Хадгалах</button>

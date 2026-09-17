@@ -13,10 +13,12 @@
 .workspace-header > div { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .workspace-header h1 { font-size: 27px; line-height: 1.25; font-weight: 600; margin: 0; overflow-wrap: anywhere; }
 .workspace-shell.with-navigation .workspace-header h1 { font-weight: 600; }
+.workspace-header-actions { display: flex; align-items: center; gap: 8px; }
+.workspace-header-actions button { min-height: 44px; height: 44px; white-space: nowrap; }
 .workspace-account { display: flex; align-items: center; font-size: 15px; }
 .workspace-account span { overflow-wrap: anywhere; }
 .workspace-account small { display: block; color: #6e7982; margin-top: 4px; font-size: 13px; }
-.workspace-account .session-timer { flex: 0 0 auto; margin-left: 14px; padding: 10px 14px; border: 1px solid #b8d7f2; border-radius: 10px; background: #f8fcff; color: #52667f; font-size: 14px; font-weight: 600; white-space: nowrap; }
+.workspace-account .session-timer { display: inline-flex; align-items: center; flex: 0 0 auto; min-height: 44px; margin-left: 14px; padding: 10px 14px; border: 1px solid #b8d7f2; border-radius: 10px; background: #f8fcff; color: #52667f; font-size: 14px; font-weight: 600; white-space: nowrap; }
 .workspace-account .session-timer strong { margin-left: 4px; color: #202b39; font-variant-numeric: tabular-nums; }
 .workspace-account-menu { position: relative; margin-left: 14px; }
 .workspace-avatar { display: grid; place-items: center; width: 44px; height: 44px; margin: 0; padding: 0; border: 2px solid #fff; border-radius: 50%; background: #0c79d8; color: #fff; font-size: 18px; font-style: normal; font-weight: 700; box-shadow: 0 0 0 1px #9ecbef; cursor: pointer; }
@@ -68,6 +70,7 @@
 .workspace-toolbar > input { flex: 1; min-width: min(220px, 100%); }
 .workspace-toolbar > label { display: grid; gap: 6px; }
 .workspace-toolbar > button { height: 44px; min-height: 44px; }
+.workspace-toolbar > button { font-weight: 500; }
 .intake-form-actions { justify-content: flex-end; }
 .workspace-toolbar .intake-refresh-button { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; flex: 0 0 44px; padding: 0; }
 .workspace-main input, .workspace-main select, .workspace-dialog input, .workspace-dialog select { min-width: 0; max-width: 100%; min-height: 42px; border: 1px solid #d5ddd8; border-radius: 8px; padding: 8px 12px; background: white; color: #283238; font-weight: 400; }
@@ -107,7 +110,7 @@
 .account-details dd { margin: 0; color: #202b39; overflow-wrap: anywhere; }
 .workspace-table-scroll { max-width: 100%; overflow-x: auto; border: 1px solid #d8dfdb; border-radius: 10px; }
 .workspace-table { border-collapse: collapse; width: 100%; font-size: 15px; text-align: left; }
-.workspace-table th { font-weight: 700; background: #f3f6f4; color: #65716a; padding: 14px 14px; white-space: nowrap; font-size: 13px; }
+.workspace-table th { font-weight: 500; background: #f3f6f4; color: #65716a; padding: 14px 14px; white-space: nowrap; font-size: 13px; }
 .workspace-table td { padding: 15px 14px; border-bottom: 1px solid #dde3df; overflow-wrap: anywhere; max-width: 320px; }
 .sample-list-scroll { overflow-x: hidden; }
 .sample-list-table { min-width: 0; table-layout: fixed; }
@@ -124,7 +127,7 @@
 .sample-customer-name { overflow: hidden; }
 .sample-customer-name span { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.4; overflow-wrap: break-word; }
 .workspace-table tbody tr:hover { background: #f5faff; }
-.workspace-table .workspace-link { border: 0; background: transparent; color: #0c79d8; padding: 0; text-align: left; text-decoration: none; overflow-wrap: anywhere; }
+.workspace-table .workspace-link { border: 0; background: transparent; color: #0c79d8; padding: 0; text-align: left; text-decoration: none; overflow-wrap: anywhere; font-weight: 500; }
 .intake-batch-row { cursor: pointer; }
 .intake-batch-row:focus, .intake-batch-row:focus-visible { outline: none; background: #f5faff; }
 .intake-batch-row .registration-number { color: #0c79d8; }
@@ -146,12 +149,12 @@
 }
 .workspace-dialog::backdrop { background: rgb(20 29 43 / 40%); }
 .workspace-dialog:focus, .workspace-dialog:focus-visible { outline: none; box-shadow: none; }
-.batch-workflow-timeline { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; margin: 0 0 20px; padding: 16px; list-style: none; border: 1px solid #dbe7f2; border-radius: 8px; background: #f8fbfe; }
+.batch-workflow-timeline { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0; margin: 0 0 20px; padding: 16px; list-style: none; border: 1px solid #dbe7f2; border-radius: 8px; background: #f8fbfe; }
 .batch-workflow-step { position: relative; display: grid; grid-template-rows: 36px auto; justify-items: center; gap: 8px; min-width: 0; color: #7b8794; text-align: center; }
 .batch-workflow-step:not(:last-child)::after { content: ""; position: absolute; top: 17px; left: calc(50% + 18px); right: calc(-50% + 18px); border-top: 2px dashed #cbd5df; }
 .batch-workflow-marker { position: relative; z-index: 1; display: grid; place-items: center; width: 36px; height: 36px; border: 2px solid #cbd5df; border-radius: 50%; background: #fff; color: #718096; }
 .batch-workflow-copy { display: grid; gap: 2px; min-width: 0; }
-.batch-workflow-copy strong { color: #667085; font-size: 14px; line-height: 1.25; white-space: nowrap; }
+.batch-workflow-copy strong { color: #667085; font-size: 14px; line-height: 1.25; white-space: normal; overflow-wrap: anywhere; }
 .batch-workflow-copy small { color: #8894a2; font-size: 12px; line-height: 1.3; }
 .batch-workflow-step.is-complete .batch-workflow-marker { border-color: #16803f; background: #16803f; color: #fff; }
 .batch-workflow-step.is-complete:not(:last-child)::after { border-color: #22a05a; border-style: solid; }
@@ -164,6 +167,22 @@
 .workspace-dialog-examination { --examination-input-width: 132px; width: min(1400px, calc(100vw - 32px)); padding: 20px; }
 .chemist-workstation { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 20px; align-items: start; }
 .chemist-sample-list { border: 1px solid #dbe3ed; background: #ffffff; }
+.chemist-history-date { display: grid; gap: 6px; padding: 14px 16px; border-bottom: 1px solid #dbe3ed; color: #46556a; font-size: 14px; font-weight: 500; }
+.chemist-history-date .calendar-date-input { width: 100%; min-height: 38px; font-weight: 500; cursor: pointer; }
+.chemist-history-picker { position: relative; }
+.chemist-history-picker-trigger { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 38px; padding: 7px 9px; border: 1px solid #cfd9e6; border-radius: 5px; background: #fff; color: #243042; font: inherit; font-weight: 500; }
+.chemist-history-picker-trigger:hover { border-color: #87bdf2; background: #f8fbfe; }
+.chemist-history-calendar { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; width: 268px; padding: 12px; border: 1px solid #cfd9e6; border-radius: 6px; background: #fff; box-shadow: 0 12px 28px rgb(27 47 74 / 18%); }
+.chemist-history-calendar-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; color: #243042; font-weight: 600; }
+.chemist-history-calendar-header div { display: flex; gap: 2px; }
+.chemist-history-calendar-header button { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: #46556a; }
+.chemist-history-calendar-header button:hover { background: #eef5fc; color: #1373d1; }
+.chemist-history-calendar-weekdays, .chemist-history-calendar-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; text-align: center; }
+.chemist-history-calendar-weekdays { margin-bottom: 4px; color: #718096; font-size: 12px; font-weight: 500; }
+.chemist-history-calendar-days button { width: 32px; height: 32px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: #1f2937; font: inherit; font-size: 14px; }
+.chemist-history-calendar-days button:not(:disabled):hover, .chemist-history-calendar-days button[aria-current="date"] { background: #1373d1; color: #fff; }
+.chemist-history-calendar-days button:disabled { color: #c7ced7; cursor: not-allowed; }
+.chemist-history-calendar > p { margin: 12px 0 0; color: #718096; font-size: 13px; }
 .chemist-sample-list h2 { margin: 0; padding: 16px; background: #f4f7fa; color: #46556a; font-size: 18px; font-weight: 400; }
 .chemist-sample-options { display: grid; }
 .chemist-sample-option { display: grid; grid-template-columns: 48px 1fr; gap: 12px; align-items: center; width: 100%; min-height: 58px; padding: 12px 16px; border: 0; border-top: 1px solid #e3e8f0; border-radius: 0; background: #ffffff; color: #202b39; text-align: left; }
@@ -179,18 +198,29 @@
 .manager-sample-row:hover, .manager-sample-row:focus { background: #f3f4f6; outline: none; }
 .workspace-table .sample-number-button { color: inherit; text-decoration: none; }
 .workspace-table .registration-number-button { text-decoration: none; }
-.intake-status-button { white-space: nowrap; }
+.workspace-main .intake-status-button { white-space: nowrap; font-weight: 500; }
 .daily-chemist-schedule { display: grid; gap: 18px; }
-.daily-chemist-schedule > label { display: grid; gap: 6px; max-width: 220px; }
-.daily-chemist-defaults { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-.daily-chemist-defaults label { display: grid; gap: 6px; }
-.daily-chemist-roster { display: grid; border: 1px solid #dce4e1; border-radius: 7px; overflow: hidden; }
+.workspace-dialog:has(.daily-chemist-schedule) .workspace-dialog-title h2 { font-weight: 600; }
+.workspace-dialog:has(.daily-chemist-schedule) .workspace-dialog-actions > button { font-weight: 500; }
+.daily-chemist-date { display: flex; align-items: center; gap: 10px; min-height: 42px; font-weight: 500; }
+.daily-chemist-date > span { color: #243042; font-weight: 500; }
+.daily-chemist-date .calendar-date-input { width: 190px; cursor: pointer; font-weight: 500; }
+.daily-chemist-panels { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: stretch; }
+.daily-chemist-defaults { display: contents; }
+.daily-chemist-schedule .daily-chemist-defaults fieldset { display: grid; align-content: start; gap: 7px; min-height: 0; margin: 0; padding: 16px; border: 1px solid #cfdad5; border-radius: 8px; background: #fff; }
+.daily-chemist-schedule .daily-chemist-defaults legend { padding: 0 4px; color: #243042; font-size: 18px; font-weight: 500; }
+.daily-chemist-schedule .daily-chemist-defaults label { display: flex; align-items: center; gap: 9px; min-height: 28px; font-weight: 500; }
+.daily-chemist-schedule .daily-chemist-defaults span { color: #74808c; font-size: 14px; font-weight: 500; }
+.daily-chemist-schedule .workspace-dialog-actions { justify-content: flex-end; margin-top: 4px; }
+.daily-chemist-schedule .workspace-dialog-actions > button { height: 42px; min-height: 42px; font-weight: 500; }
+.daily-chemist-schedule .daily-chemist-roster { display: grid; gap: 0; min-width: 0; margin: 0; padding: 0; border: 1px solid #cfdad5; border-radius: 8px; overflow: hidden; }
+.daily-chemist-schedule .daily-chemist-roster legend { padding: 0 4px; margin-left: 12px; color: #243042; font-size: 18px; font-weight: 500; }
 .daily-chemist-roster > label { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 12px 14px; border-bottom: 1px solid #e4eae7; }
 .daily-chemist-roster > label:last-child { border-bottom: 0; }
 .daily-chemist-roster > label.is-on-vacation { background: #f8faf9; color: #7b8790; }
-.daily-chemist-roster strong, .daily-chemist-roster small { display: block; }
-.daily-chemist-roster small { margin-top: 2px; color: #74808c; font-size: 13px; font-weight: 400; }
-.daily-chemist-vacation { display: inline-flex; align-items: center; gap: 7px; flex: 0 0 auto; font-size: 14px; }
+.daily-chemist-roster strong, .daily-chemist-roster small { display: block; font-weight: 500; }
+.daily-chemist-roster small { margin-top: 2px; color: #74808c; font-size: 13px; }
+.daily-chemist-vacation { display: inline-flex; align-items: center; gap: 7px; flex: 0 0 auto; font-size: 14px; font-weight: 500; }
 .organization-fields { display: grid; gap: 16px; }
 .organization-fields label { display: grid; gap: 6px; }
 .organization-row { cursor: pointer; }
@@ -268,13 +298,18 @@
 .approval-notice { display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px; border: 1px solid #abd5bc; border-radius: 4px; background: #e7f6ed; color: #22643e; font-size: 14px; font-weight: 600; }
 .examination-actions > .approval-notice { margin-right: auto; }
 .approval-notice time { font-variant-numeric: tabular-nums; font-weight: 400; }
+.submission-notice { display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px; border: 1px solid #b8cff0; border-radius: 4px; background: #f3f7ff; color: #315b91; font-size: 14px; font-weight: 600; }
+.examination-actions > .submission-notice { margin-right: auto; }
+.submission-notice time { font-variant-numeric: tabular-nums; font-weight: 400; }
 .manager-review-workstation { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 22px; align-items: stretch; min-height: 600px; }
 .manager-review-workstation .chemist-sample-list { min-height: 100%; }
 .manager-review-workstation .chemist-form-panel { display: flex; min-height: 100%; }
 .manager-review-workstation .chemist-examination { display: flex; flex: 1; flex-direction: column; min-height: 100%; }
 .manager-review-workstation .examination-form { display: flex; flex: 1; flex-direction: column; }
 .manager-review-workstation .examination-actions { margin-top: auto; }
+.manager-review-workstation .chemist-sample-options { gap: 8px; padding: 12px; }
 .manager-review-workstation .chemist-sample-option { grid-template-columns: 24px minmax(0, 1fr); align-items: center; }
+.manager-review-workstation .chemist-sample-option { border: 1px solid #e3e8f0; border-radius: 6px; }
 .manager-review-workstation .chemist-sample-option .status-badge { grid-column: 2; justify-self: start; margin-top: 4px; }
 @media (max-width: 900px) { .manager-review-workstation { grid-template-columns: 1fr; min-height: 0; } .manager-review-workstation .chemist-sample-list { min-height: 0; } }
 @media (max-width: 720px) { .workspace-section-heading { flex-direction: column; } .integration-client-card dl, .integration-form-grid { grid-template-columns: 1fr; } }
@@ -291,6 +326,32 @@
 .examination-return-note span { white-space: pre-wrap; line-height: 1.45; }
 .examination-return-note small { color: #96651c; font-size: 12px; }
 .examination-scroll { min-width: 0; overflow-x: hidden; }
+.silver-examination-header { display: grid; grid-template-columns: 150px 150px minmax(320px, 1fr) 300px 300px; gap: 16px; align-items: end; margin: 0 0 14px; }
+.silver-examination-header > * { min-width: 0; }
+.silver-examination-header > label.silver-titer-field { display: grid; grid-column: 4; grid-template-columns: auto 180px; gap: 10px; align-items: center; width: 248px; justify-self: end; transform: none; }
+.silver-examination-header.is-manager { position: relative; }
+.silver-examination-header.is-manager > label.silver-titer-field { display: contents; }
+.silver-examination-header.is-manager .silver-titer-field > span { position: absolute; right: 230px; bottom: 0; display: flex; align-items: center; min-height: 40px; }
+.silver-examination-header.is-manager .silver-titer-field > input { position: absolute; right: 0; bottom: 0; width: 220px; }
+.silver-titer-field > span { white-space: nowrap; }
+.silver-examination-header > label { display: grid; gap: 6px; font-size: 15px; font-weight: 500; }
+.silver-readonly-field:disabled { background: #f3f4f6; color: #374151; opacity: 1; text-align: right; }
+.silver-method-choice { display: flex; grid-column: 2 / 4; flex-wrap: nowrap; align-items: center; gap: 8px 16px; min-height: 40px; font-size: 15px; font-weight: 500; }
+.silver-examination-header.is-manager .silver-method-choice { grid-column: 3; }
+.silver-method-choice label { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.silver-method-used { display: flex; grid-column: 3; align-items: center; min-height: 40px; font-size: 15px; font-weight: 500; white-space: nowrap; }
+.examination-right.silver-examination-right { grid-template-columns: minmax(210px, 0.9fr) minmax(150px, 0.6fr) minmax(150px, 0.55fr); gap: 22px; }
+.silver-derived-values { display: grid; align-content: start; gap: 8px; padding-top: 48px; }
+.silver-derived-values > label:not(.examination-recheck) { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(130px, 0.9fr); align-items: center; gap: 10px; font-size: 15px; font-weight: 500; text-align: right; }
+.silver-derived-values .examination-recheck { margin-top: 8px; justify-content: flex-start; }
+.silver-assay-values { display: grid; grid-column: 3; justify-self: end; width: 220px; gap: 12px; align-content: start; }
+.silver-assay-values input { width: 100%; min-height: 40px; height: 40px; text-align: right; }
+.silver-result { grid-column: 2 / 4; grid-row: 2; align-self: start; justify-self: end; width: 220px; padding: 4px 3px; }
+.silver-result .examination-total { width: 100%; }
+.silver-result h3 { justify-content: center; }
+.silver-result > input { width: 100%; min-height: 40px; height: 40px; text-align: right; }
+.silver-footer-fields { grid-column: 1 / 4; grid-row: 3; grid-template-columns: 20% minmax(0, 1fr); }
+.silver-footer-fields .examination-description { grid-column: 2; }
 .examination-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(120px, 0.28fr); gap: 16px; align-items: start; min-width: 0; }
 .examination-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 15px; }
 .examination-table th { font-weight: 400; text-align: center; line-height: 20px; height: 44px; padding: 3px 4px; }
@@ -309,6 +370,8 @@
 .examination-columns { row-gap: 0; }
 .examination-totals { grid-column: 1; grid-row: 2; }
 .examination-footer-fields { grid-column: 2 / 4; grid-row: 2; display: grid; grid-template-columns: 154px minmax(0, 1fr); gap: 5px 3px; padding: 4px 0; font-size: 15px; }
+.examination-footer-fields.silver-footer-fields { grid-column: 1 / 4; grid-row: 3; grid-template-columns: 30% minmax(0, 1fr); padding-top: 34px; }
+.examination-footer-fields.silver-footer-fields .examination-description { grid-column: 2; }
 .examination-footer-fields .examination-recheck { grid-column: 1 / -1; min-height: 20px; }
 .examination-footer-fields .examination-description { grid-column: 1 / -1; }
 .examination-add-row.secondary-button { display: flex; align-items: center; justify-content: center; width: 100%; height: 40px; min-height: 40px; padding: 6px 8px; background: #eef0f3; border-color: #cbd1d9; color: #46556a; }
@@ -363,6 +426,10 @@
 .invite-link-field input { flex: 1; min-width: 0; font-family: var(--font-geist-mono), monospace; font-size: 14px; }
 .invite-link-field button { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 40px; width: 40px; padding: 0; }
 .workspace-dialog fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.intake-registration-summary { display: inline-flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 10px; border: 1px solid #dce8f2; border-radius: 6px; background: #f7fbfe; color: #46556a; font-size: 14px; font-weight: 500; white-space: nowrap; }
+.intake-registration-person { max-width: min(280px, 28vw); overflow: hidden; text-overflow: ellipsis; }
+.intake-registration-summary time { color: #65716a; font-variant-numeric: tabular-nums; }
+@media (min-width: 521px) { .workspace-dialog:has(.intake-registration-summary) .workspace-dialog-actions { flex-wrap: nowrap; } }
 .workspace-form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 20px 0; align-items: end; }
 .workspace-form-grid label, .workspace-field { display: grid; gap: 7px; font-size: 16px; font-weight: 400; }
 .workspace-checkbox { display: flex !important; align-items: center; }
@@ -409,7 +476,7 @@
   .workspace-header { flex-wrap: wrap; }
   .workspace-header h1 { font-size: 24px; }
   .workspace-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .daily-chemist-defaults { grid-template-columns: 1fr; }
+  .daily-chemist-panels { grid-template-columns: 1fr; }
   .sample-metadata { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dashboard-summary-grid, .workspace-skeleton-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
