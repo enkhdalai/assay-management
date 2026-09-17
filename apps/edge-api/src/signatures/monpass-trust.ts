@@ -46,12 +46,19 @@ function base64ToBytes(value: string): Uint8Array {
   return Uint8Array.from(atob(normalized), (character) => character.charCodeAt(0));
 }
 
+function normalizePem(value: string): string {
+  const trimmed = value.trim();
+  const unquoted = trimmed.startsWith('"') && trimmed.endsWith('"') ? trimmed.slice(1, -1) : trimmed;
+  // Cloudflare secrets preserve escaped newlines, whereas dotenv expands them.
+  return unquoted.replace(/\\r\\n/g, "\n").replace(/\\n/g, "\n").replace(/\\r/g, "\r");
+}
+
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
 function pemToCertificate(pem: string, label: string): Certificate {
-  const match = /-----BEGIN CERTIFICATE-----([\s\S]+?)-----END CERTIFICATE-----/.exec(pem);
+  const match = /-----BEGIN CERTIFICATE-----([\s\S]+?)-----END CERTIFICATE-----/.exec(normalizePem(pem));
   if (!match) throw new Error(`${label} PEM формат буруу байна.`);
   const parsed = asn1js.fromBER(toArrayBuffer(base64ToBytes(match[1])));
   if (parsed.offset === -1) throw new Error(`${label} ASN.1 формат буруу байна.`);
