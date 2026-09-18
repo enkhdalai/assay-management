@@ -138,7 +138,9 @@ async function postOcspRequest(ocspUrl: string, requestBytes: ArrayBuffer): Prom
     const response = await fetch(ocspUrl, {
       method: "POST",
       headers: { "content-type": "application/ocsp-request", accept: "application/ocsp-response" },
-      body: requestBytes,
+      // A TypedArray gives Workers a fixed Content-Length. Tridum's responder
+      // accepts the equivalent Node request but rejects chunked Worker bodies.
+      body: new Uint8Array(requestBytes),
       signal: controller.signal,
     });
     if (!response.ok) throw new Error(`OCSP хариу алдаатай байна (${response.status}).`);
