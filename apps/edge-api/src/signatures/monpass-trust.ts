@@ -82,7 +82,7 @@ async function sha256Base64Url(bytes: ArrayBuffer): Promise<string> {
   return toBase64(digest).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-function providerConfigurations(env: EdgeApiEnv): ProviderTrustConfiguration[] {
+function providerConfigurations(env: EdgeApiEnv): { providers: ProviderTrustConfiguration[]; configurationErrors: string[] } {
   const rootPem = env.MONGOLIAN_NATIONAL_ROOT_CA_PEM ?? env.MONPASS_TRUST_ROOT_CA_PEM;
   const nationalIssuingPem = env.MONGOLIAN_NATIONAL_ISSUING_CA_PEM ?? env.MONPASS_TRUST_ISSUING_CA_PEM;
   if (!rootPem || !nationalIssuingPem) throw new EsignTrustConfigurationError();
@@ -90,20 +90,32 @@ function providerConfigurations(env: EdgeApiEnv): ProviderTrustConfiguration[] {
   const root = pemToCertificate(rootPem, "Үндэсний root CA");
   const nationalIssuing = pemToCertificate(nationalIssuingPem, "Үндэсний issuing CA");
   const providers: ProviderTrustConfiguration[] = [];
+  const configurationErrors: string[] = [];
   if (env.MONPASS_TRUST_CLASS2_4_CA_PEM && env.MONPASS_OCSP_URL) {
-    const issuer = pemToCertificate(env.MONPASS_TRUST_CLASS2_4_CA_PEM, "MonPass Class 2-4 CA");
-    providers.push({ provider: "monpass", root, nationalIssuing, issuer, providerChain: [issuer], ocspUrl: env.MONPASS_OCSP_URL });
+    try {
+      const issuer = pemToCertificate(env.MONPASS_TRUST_CLASS2_4_CA_PEM, "MonPass Class 2-4 CA");
+      providers.push({ provider: "monpass", root, nationalIssuing, issuer, providerChain: [issuer], ocspUrl: env.MONPASS_OCSP_URL });
+    } catch (error) {
+      configurationErrors.push(`monpass: ${error instanceof Error ? error.message : "CA тохиргоо буруу байна."}`);
+    }
   }
   if (env.TRIDUM_TRUST_ISSUING_CA_PEM && env.TRIDUM_TRUST_ISSUING_SUB_CA_PEM && env.TRIDUM_OCSP_URL) {
-    const issuing = pemToCertificate(env.TRIDUM_TRUST_ISSUING_CA_PEM, "Tridum issuing CA");
-    const issuer = pemToCertificate(env.TRIDUM_TRUST_ISSUING_SUB_CA_PEM, "Tridum sub CA");
-    providers.push({ provider: "tridum", root, nationalIssuing, issuer, providerChain: [issuer, issuing], ocspUrl: env.TRIDUM_OCSP_URL });
+    try {
+      const issuing = pemToCertificate(env.TRIDUM_TRUST_ISSUING_CA_PEM, "Tridum issuing CA");
+      const issuer = pemToCertificate(env.TRIDUM_TRUST_ISSUING_SUB_CA_PEM, "Tridum sub CA");
+      providers.push({ provider: "tridum", root, nationalIssuing, issuer, providerChain: [issuer, issuing], ocspUrl: env.TRIDUM_OCSP_URL });
+    } catch (error) {
+      configurationErrors.push(`tridum: ${error instanceof Error ? error.message : "CA тохиргоо буруу байна."}`);
+    }
   }
-  if (!providers.length) throw new EsignTrustConfigurationError();
-  return providers;
+  if (!providers.length) {
+    if (configurationErrors.length) throw new Error(`eSign CA chain тохиргоо буруу байна. ${configurationErrors.join("; ")}`);
+    throw new EsignTrustConfigurationError();
+  }
+  return { providers, configurationErrors };
 }
 
-async function resolveProviderForSigner(signer: Certificate, providers: ProviderTrustConfiguration[]) {
+async function resolveProviderForSigner(signer: Certificate, providers: ProviderTrustConfiguration[], configurationErrors: string[]) {
   const failures: string[] = [];
   for (const config of providers) {
     const chain = new CertificateChainValidationEngine({
@@ -115,7 +127,7 @@ async function resolveProviderForSigner(signer: Certificate, providers: Provider
     if (result.result) return { config, result };
     failures.push(`${config.provider}: ${result.resultMessage}`);
   }
-  throw new Error(`Гарын үсгийн сертификат тохируулсан CA chain-тэй таарахгүй байна. ${failures.join("; ")}`);
+  throw new Error(`Гарын үсгийн сертификат тохируулсан CA chain-тэй таарахгүй байна. ${[...failures, ...configurationErrors].join("; ")}`);
 }
 
 async function postOcspRequest(ocspUrl: string, requestBytes: ArrayBuffer): Promise<ArrayBuffer> {
@@ -190,7 +202,8 @@ function readOcspStatus(response: BasicOCSPResponse, request: OCSPRequest) {
 /** Identifies the provider only from the validated signer CA chain, then verifies its OCSP response. */
 export async function verifyEsignCertificateTrust(signerCertificate: string, env: EdgeApiEnv): Promise<EsignTrustValidation> {
   const signer = base64DerToCertificate(signerCertificate, "Гарын үсэг зурсан сертификат");
-  const { config, result: chainResult } = await resolveProviderForSigner(signer, providerConfigurations(env));
+  const { providers, configurationErrors } = providerConfigurations(env);
+  const { config, result: chainResult } = await resolveProviderForSigner(signer, providers, configurationErrors);
   const request = new OCSPRequest();
   await request.createForCertificate(signer, { issuerCertificate: config.issuer, hashAlgorithm: "SHA-1" });
   // A newly created OCSP request has no cached BER state; `true` serializes it.
