@@ -38,10 +38,10 @@ export type EsignTrustValidation = {
   };
 };
 
-function base64ToBytes(value: string): Uint8Array {
+function base64ToBytes(value: string, label: string): Uint8Array {
   const normalized = value.replace(/\s/g, "");
   if (!normalized || normalized.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(normalized)) {
-    throw new Error("Base64 формат буруу байна.");
+    throw new Error(`${label} Base64 формат буруу байна.`);
   }
   return Uint8Array.from(atob(normalized), (character) => character.charCodeAt(0));
 }
@@ -49,8 +49,9 @@ function base64ToBytes(value: string): Uint8Array {
 function normalizePem(value: string): string {
   const trimmed = value.trim();
   const unquoted = trimmed.startsWith('"') && trimmed.endsWith('"') ? trimmed.slice(1, -1) : trimmed;
-  // Cloudflare secrets preserve escaped newlines, whereas dotenv expands them.
-  return unquoted.replace(/\\r\\n/g, "\n").replace(/\\n/g, "\n").replace(/\\r/g, "\r");
+  // Cloudflare secrets can preserve one or more layers of escaped newlines,
+  // whereas dotenv expands them when it reads a quoted local value.
+  return unquoted.replace(/\\+r\\+n/g, "\n").replace(/\\+n/g, "\n").replace(/\\+r/g, "\r");
 }
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
@@ -60,13 +61,13 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 function pemToCertificate(pem: string, label: string): Certificate {
   const match = /-----BEGIN CERTIFICATE-----([\s\S]+?)-----END CERTIFICATE-----/.exec(normalizePem(pem));
   if (!match) throw new Error(`${label} PEM формат буруу байна.`);
-  const parsed = asn1js.fromBER(toArrayBuffer(base64ToBytes(match[1])));
+  const parsed = asn1js.fromBER(toArrayBuffer(base64ToBytes(match[1], label)));
   if (parsed.offset === -1) throw new Error(`${label} ASN.1 формат буруу байна.`);
   return new Certificate({ schema: parsed.result });
 }
 
 function base64DerToCertificate(value: string, label: string): Certificate {
-  const parsed = asn1js.fromBER(toArrayBuffer(base64ToBytes(value)));
+  const parsed = asn1js.fromBER(toArrayBuffer(base64ToBytes(value, label)));
   if (parsed.offset === -1) throw new Error(`${label} ASN.1 формат буруу байна.`);
   return new Certificate({ schema: parsed.result });
 }
