@@ -32,7 +32,8 @@
     "lucide-react": "^1.41.0",
     "pkijs": "^3.3.3",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react-dom": "^19.3.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.54.9",

@@ -34,6 +34,8 @@ export type CreateBullionIntakeInput = {
   province?: string;
   district?: string;
   dispatchReference?: string;
+  actNumber?: string;
+  actDate?: string;
   initialBullionNumber?: string;
   delta?: number;
   silverTiter?: number;
@@ -54,6 +56,7 @@ export type BullionIntakeBatchRecord = Omit<CreateBullionIntakeInput, "items"> &
   publicId: string;
   customerName: string;
   receivedByName: string;
+  wasEdited?: boolean;
   pieceCount: number;
   createdAt: string;
   items: BullionIntakeItemRecord[];

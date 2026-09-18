@@ -13,6 +13,7 @@ import { userRoutes } from "./users/routes";
 import { organizationRoutes } from "./organizations/routes";
 import { reportRoutes } from "./bullion/reports";
 import { integrationClientRoutes } from "./integrations/routes";
+import { metalPriceRoutes } from "./metal-prices/routes";
 import { getAuthenticatedUserFromRequest } from "./auth/http";
 
 export type AssetFetcher = {
@@ -96,6 +97,7 @@ edgeApi.route("/v1/banks", bankRoutes);
 edgeApi.route("/v1/bullion", bullionRoutes);
 edgeApi.route("/v1/reports", reportRoutes);
 edgeApi.route("/v1/integration-clients", integrationClientRoutes);
+edgeApi.route("/metal-prices", metalPriceRoutes);
 edgeApi.route("/setup", setupRoutes);
 edgeApi.route("/bom/v1", bomRoutes);
 

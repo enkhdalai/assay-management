@@ -46,6 +46,35 @@ export function getMemoryReport(user: AuthenticatedUser, from: string, to: strin
   });
 }
 
+export function getMemoryPrivateAssayReport(user: AuthenticatedUser, from: string, to: string) {
+  const start = Date.parse(`${from}T00:00:00+08:00`);
+  const end = Date.parse(`${to}T00:00:00+08:00`) + 86400000;
+  return visibleBatches(user)
+    .filter((batch) => Date.parse(batch.receivedAt || batch.createdAt) >= start && Date.parse(batch.receivedAt || batch.createdAt) < end)
+    .flatMap((batch) => batch.items.map((item) => ({
+      organizationName: batch.customerName,
+      receivedAt: batch.receivedAt,
+      registrationNo: batch.publicId,
+      bullionNo: item.bullionNo,
+      analysisNo: item.analysisNo,
+      metal: batch.metal,
+      grossWeightBeforeGrams: item.grossWeightBeforeGrams,
+      grossWeightAfterGrams: item.grossWeightAfterGrams ?? null,
+      sampleWeightMilligrams: item.sampleWeightMilligrams ?? null,
+      lossGrams: item.grossWeightAfterGrams == null ? null : item.grossWeightBeforeGrams - item.grossWeightAfterGrams - (item.slagWeightGrams ?? 0),
+      receivedWeightGrams: null,
+      remainingMilligrams: null,
+      korolkoMilligrams: null,
+      goldFinenessPermille: null,
+      silverFinenessPermille: null,
+      delta: batch.delta ?? 0,
+      origin: batch.dispatchReference ?? null,
+      chemistName: item.assignedChemistName ?? null,
+      actNumber: batch.actNumber ?? null,
+      actDate: batch.actDate ?? null,
+    })));
+}
+
 export function getMemoryDashboardSummary(user: AuthenticatedUser, period: "day" | "month" | "year" = "day") {
   const dateParts = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Ulaanbaatar", year: "numeric", month: "2-digit", day: "2-digit",
@@ -660,7 +689,9 @@ async function applyDailyChemistAssignmentInMemory(batch: BullionIntakeBatchReco
 function customerSequenceQuery(customerId: string, user: AuthenticatedUser) {
   return sql`SELECT c.id, c.display_name AS "displayName", c.assay_center_id AS "organizationId", ''::text AS prefix,
       bullion.value AS "nextSequence", lpad(bullion.value::text, GREATEST(4, length(bullion.value::text)), '0') AS "nextNumber",
-      numbering.registration_prefix || lpad(registration.value::text, GREATEST(4, length(registration.value::text)), '0') AS "nextRegistrationNumber"
+      numbering.registration_prefix || lpad(registration.value::text, GREATEST(4, length(registration.value::text)), '0') AS "nextRegistrationNumber",
+      lpad(act.value::text, GREATEST(4, length(act.value::text)), '0') AS "nextActNumber",
+      (SELECT (COALESCE(max(examination_number), 0) + 1)::text FROM bullion_intake_items) AS "nextAnalysisNumber"
     FROM customers c
     JOIN organizations o ON o.id = c.assay_center_id
     CROSS JOIN LATERAL (SELECT COALESCE(o.metadata->>'bullionPrefix', CASE WHEN o.type = 'private_assay_center' THEN '55' ELSE '' END) AS registration_prefix) numbering
@@ -671,6 +702,9 @@ function customerSequenceQuery(customerId: string, user: AuthenticatedUser) {
     CROSS JOIN LATERAL (SELECT COALESCE(max(CASE WHEN b.public_id ~ ('^' || numbering.registration_prefix || '[0-9]{4,12}$')
       THEN substring(b.public_id FROM length(numbering.registration_prefix) + 1)::bigint END), 0) + 1 AS value
       FROM bullion_intake_batches b WHERE b.assay_center_id = o.id) registration
+    CROSS JOIN LATERAL (SELECT COALESCE(max(CASE WHEN b.act_number ~ '^[0-9]{1,12}$'
+      THEN b.act_number::bigint END), 0) + 1 AS value
+      FROM bullion_intake_batches b WHERE b.assay_center_id = o.id) act
     WHERE c.id = ${customerId} AND (${user.role} = 'system_admin' OR c.assay_center_id = ${user.organizationId})`;
 }
 
@@ -687,6 +721,13 @@ function memoryNextRegistrationNumber(user: AuthenticatedUser): { prefix: string
   return { prefix, value: issued.reduce((max, value) => Math.max(max, value), 0) + 1 };
 }
 
+function memoryNextActNumber(user: AuthenticatedUser): string {
+  const value = inMemoryBatches.filter((batch) => batchOwners.get(batch.id) === user.organizationId)
+    .map((batch) => /^[0-9]{1,12}$/.test(batch.actNumber ?? "") ? Number(batch.actNumber) : 0)
+    .reduce((max, current) => Math.max(max, current), 0) + 1;
+  return formatBullionNumber("", value);
+}
+
 bullionRoutes.get("/intakes/next-number", async (c) => {
   const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
   if (!user) return c.json({ ok: false }, 401);
@@ -696,11 +737,11 @@ bullionRoutes.get("/intakes/next-number", async (c) => {
   if (!c.env.DATABASE_URL) {
     if (!localCustomerForCenter(customerId, user)) return c.json({ ok: false }, 404);
     const next = memoryNextNumber(user);
-    return c.json({ ok: true, nextNumber: formatBullionNumber(next.prefix, next.value), prefix: next.prefix });
+    return c.json({ ok: true, nextNumber: formatBullionNumber(next.prefix, next.value), prefix: next.prefix, nextActNumber: memoryNextActNumber(user), nextAnalysisNumber: String(nextMemoryExaminationNumber) });
   }
-  const customer = readRows(await createDatabase(c.env.DATABASE_URL).execute<{ nextNumber: string; prefix: string }>(customerSequenceQuery(customerId, user)))[0];
+  const customer = readRows(await createDatabase(c.env.DATABASE_URL).execute<{ nextNumber: string; prefix: string; nextActNumber: string; nextAnalysisNumber: string }>(customerSequenceQuery(customerId, user)))[0];
   if (!customer) return c.json({ ok: false }, 404);
-  return c.json({ ok: true, nextNumber: customer.nextNumber, prefix: customer.prefix });
+  return c.json({ ok: true, nextNumber: customer.nextNumber, prefix: customer.prefix, nextActNumber: customer.nextActNumber, nextAnalysisNumber: customer.nextAnalysisNumber });
 });
 
 bullionRoutes.get("/intakes/daily-chemist-assignment", async (c) => {
@@ -822,13 +863,20 @@ bullionRoutes.patch("/intakes/:id", async (c) => {
   const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
   if (!user) return c.json({ ok: false }, 401);
   if (!INTAKE_ROLES.has(user.role)) return c.json({ ok: false }, 403);
+  if (!isCenterManager(user.role)) return c.json({ ok: false }, 403);
   const id = c.req.param("id");
   const body = object(await c.req.json().catch(() => null));
   const rows = Array.isArray(body.items) ? body.items.map(object) : [];
+  const manager = isCenterManager(user.role);
+  const initialBullionNumber = text(body.initialBullionNumber).trim();
+  const allowedBodyFields = manager ? ["items", "status", "initialBullionNumber"] : ["items", "status"];
+  const allowedRowFields = manager ? ["id", "bullionNo", "grossWeightBeforeGrams", "grossWeightAfterGrams", "slagWeightGrams", "sampleWeightMilligrams"] : ["id", "grossWeightAfterGrams", "slagWeightGrams", "sampleWeightMilligrams"];
   if (!isUuid(id) || !rows.length || rows.length > 100 || !["draft", "ready_for_sampling", "sample_taken"].includes(text(body.status))
-    || Object.keys(body).some((key) => !["items", "status"].includes(key))
-    || rows.some((row) => !isUuid(text(row.id)) || Object.keys(row).some((key) => !["id", "grossWeightAfterGrams", "slagWeightGrams", "sampleWeightMilligrams"].includes(key))
-      || [row.grossWeightAfterGrams, row.slagWeightGrams, row.sampleWeightMilligrams].some((value) => value != null && (typeof value !== "number" || !Number.isFinite(value) || value < 0)))) {
+    || Object.keys(body).some((key) => !allowedBodyFields.includes(key))
+    || (manager && !/^\d{1,12}$/.test(initialBullionNumber))
+    || rows.some((row) => !isUuid(text(row.id)) || Object.keys(row).some((key) => !allowedRowFields.includes(key))
+      || [row.grossWeightAfterGrams, row.slagWeightGrams, row.sampleWeightMilligrams].some((value) => value != null && (typeof value !== "number" || !Number.isFinite(value) || value < 0))
+      || (manager && (!/^\d{1,12}$/.test(text(row.bullionNo)) || typeof row.grossWeightBeforeGrams !== "number" || !Number.isFinite(row.grossWeightBeforeGrams) || row.grossWeightBeforeGrams <= 0)))) {
     return c.json({ ok: false, message: "Жингийн утгыг зөв оруулна уу." }, 400);
   }
   if (user.role === "intake_officer" && (body.status === "sample_taken" || rows.some((row) => "sampleWeightMilligrams" in row))) return c.json({ ok: false }, 403);
@@ -837,58 +885,64 @@ bullionRoutes.patch("/intakes/:id", async (c) => {
     return c.json({ ok: false, message: "Хайлалтын дараах жин, дээжийн жинг оруулна уу." }, 400);
   }
   if (new Set(rows.map((row) => row.id)).size !== rows.length) return c.json({ ok: false }, 400);
-  const changes = rows.map((row) => ({ id: row.id, after: row.grossWeightAfterGrams ?? null,
-    slag: row.slagWeightGrams ?? null, sample: row.sampleWeightMilligrams ?? null }));
+  const changes = rows.map((row) => ({ id: row.id, bullionNo: manager ? text(row.bullionNo) : null, before: manager ? row.grossWeightBeforeGrams : null,
+    after: row.grossWeightAfterGrams ?? null, slag: row.slagWeightGrams ?? null, sample: row.sampleWeightMilligrams ?? null }));
   if (!c.env.DATABASE_URL) {
     const batch = visibleBatches(user).find((batch) => batch.id === id);
     if (!batch) return c.json({ ok: false }, 404);
-    if ((batch.status !== "draft" && !(batch.status === "ready_for_sampling" && isCenterManager(user.role) && body.status !== "draft")) || changes.length !== batch.items.length || batch.items.some((item) => !changes.some((change) => change.id === item.id))) return c.json({ ok: false }, 409);
+    if ((!manager && batch.status !== "draft") || changes.length !== batch.items.length || batch.items.some((item) => !changes.some((change) => change.id === item.id))) return c.json({ ok: false }, 409);
     if (batch.items.some((item) => {
       const change = changes.find((candidate) => candidate.id === item.id)!;
-      return (change.after != null && Number(change.after) > item.grossWeightBeforeGrams)
-        || (change.slag != null && change.after != null && Number(change.slag) > item.grossWeightBeforeGrams - Number(change.after));
+      const before = change.before == null ? item.grossWeightBeforeGrams : Number(change.before);
+      return (change.after != null && Number(change.after) > before)
+        || (change.slag != null && change.after != null && Number(change.slag) > before - Number(change.after));
     })) return c.json({ ok: false, message: "Дараах жин өмнөх жингээс их, Шлак жин нь хайлалтын жингийн зөрүүнээс их байж болохгүй." }, 400);
     for (const item of batch.items) {
       const change = changes.find((change) => change.id === item.id)!;
+      if (manager) { item.bullionNo = change.bullionNo ?? item.bullionNo; item.grossWeightBeforeGrams = Number(change.before); }
       item.grossWeightAfterGrams = change.after as number | undefined;
       item.slagWeightGrams = change.slag as number | undefined;
-      if (isCenterManager(user.role)) item.sampleWeightMilligrams = change.sample as number | undefined;
+      if (manager) item.sampleWeightMilligrams = change.sample as number | undefined;
     }
+    if (manager) batch.initialBullionNumber = initialBullionNumber;
+    if (manager) batch.wasEdited = true;
     batch.status = body.status as "draft" | "ready_for_sampling" | "sample_taken";
     await assignInMemory(batch, user, c.env);
     return c.json({ ok: true, record: batch });
   }
   const db = createDatabase(c.env.DATABASE_URL);
   const eventId = crypto.randomUUID();
-  const hash = await sha256Base64Url(JSON.stringify({ eventId, actor: user.id, id, changes, status: body.status }));
+  const hash = await sha256Base64Url(JSON.stringify({ eventId, actor: user.id, id, initialBullionNumber: manager ? initialBullionNumber : null, changes, status: body.status }));
   const results = await db.batch([
     db.execute(sql`SELECT pg_advisory_xact_lock(741206825)`),
     db.execute<{ id: string }>(sql`
     WITH incoming AS (SELECT * FROM jsonb_to_recordset(${JSON.stringify(changes)}::jsonb)
-      AS r(id uuid, after numeric, slag numeric, sample numeric)),
+      AS r(id uuid, bullion_no text, before numeric, after numeric, slag numeric, sample numeric)),
     target AS MATERIALIZED (
       SELECT b.id FROM bullion_intake_batches b WHERE b.id = ${id}
-        AND (b.status = 'draft' OR (b.status = 'ready_for_sampling' AND ${user.role} <> 'intake_officer' AND ${body.status} <> 'draft'))
+        AND (b.status = 'draft' OR ${manager})
         AND (${user.role} = 'system_admin' OR b.assay_center_id = ${user.organizationId})
         AND (SELECT count(*) FROM bullion_intake_items WHERE batch_id = b.id) = ${changes.length}
         AND NOT EXISTS (SELECT 1 FROM incoming r WHERE NOT EXISTS (SELECT 1 FROM bullion_intake_items i WHERE i.id = r.id AND i.batch_id = b.id))
-        AND NOT EXISTS (SELECT 1 FROM incoming r JOIN bullion_intake_items i ON i.id = r.id WHERE r.after > i.gross_weight_before_grams OR (r.slag IS NOT NULL AND r.after IS NOT NULL AND r.slag > i.gross_weight_before_grams - r.after))
+        AND NOT EXISTS (SELECT 1 FROM incoming r JOIN bullion_intake_items i ON i.id = r.id WHERE r.after > COALESCE(r.before, i.gross_weight_before_grams) OR (r.slag IS NOT NULL AND r.after IS NOT NULL AND r.slag > COALESCE(r.before, i.gross_weight_before_grams) - r.after))
       FOR UPDATE
     ), previous AS MATERIALIZED (
-      SELECT i.id, i.gross_weight_after_grams, i.slag_weight_grams, i.sample_weight_milligrams
-      FROM bullion_intake_items i JOIN target t ON t.id = i.batch_id
+      SELECT i.id, i.bullion_no, i.gross_weight_before_grams, i.gross_weight_after_grams, i.slag_weight_grams, i.sample_weight_milligrams, b.initial_bullion_number
+      FROM bullion_intake_items i JOIN target t ON t.id = i.batch_id JOIN bullion_intake_batches b ON b.id = t.id
     ), changed AS (
-      UPDATE bullion_intake_items i SET gross_weight_after_grams = r.after, slag_weight_grams = r.slag,
-        sample_weight_milligrams = CASE WHEN ${user.role} = 'intake_officer' THEN i.sample_weight_milligrams ELSE r.sample END
+      UPDATE bullion_intake_items i SET bullion_no = CASE WHEN ${manager} THEN r.bullion_no ELSE i.bullion_no END,
+        gross_weight_before_grams = CASE WHEN ${manager} THEN r.before ELSE i.gross_weight_before_grams END,
+        gross_weight_after_grams = r.after, slag_weight_grams = r.slag,
+        sample_weight_milligrams = CASE WHEN ${manager} THEN r.sample ELSE i.sample_weight_milligrams END
       FROM incoming r WHERE i.id = r.id AND i.batch_id IN (SELECT id FROM target)
-      RETURNING i.id, i.gross_weight_after_grams, i.slag_weight_grams, i.sample_weight_milligrams
+      RETURNING i.id, i.bullion_no, i.gross_weight_before_grams, i.gross_weight_after_grams, i.slag_weight_grams, i.sample_weight_milligrams
     ), batch AS (
-      UPDATE bullion_intake_batches SET status = ${body.status}, updated_at = now()
+      UPDATE bullion_intake_batches SET status = ${body.status}, initial_bullion_number = CASE WHEN ${manager} THEN ${initialBullionNumber} ELSE initial_bullion_number END, updated_at = now()
       WHERE id IN (SELECT id FROM target) AND (SELECT count(*) FROM changed) = ${changes.length} RETURNING id
     ), audit AS (
       INSERT INTO audit_logs (id, actor_user_id, actor_organization_id, action, entity_type, entity_id, old_values, new_values, reason, entry_hash)
       SELECT ${eventId}, ${user.id}, ${user.organizationId}, 'bullion_intake.updated', 'bullion_intake_batches', batch.id,
-        (SELECT jsonb_agg(to_jsonb(previous)) FROM previous), jsonb_build_object('status', ${body.status}::text, 'items', (SELECT jsonb_agg(to_jsonb(changed)) FROM changed)), 'Intake weights updated', ${hash} FROM batch
+        (SELECT jsonb_agg(to_jsonb(previous)) FROM previous), jsonb_build_object('status', ${body.status}::text, 'initialBullionNumber', CASE WHEN ${manager} THEN ${initialBullionNumber} ELSE NULL END, 'items', (SELECT jsonb_agg(to_jsonb(changed)) FROM changed)), 'Intake weights updated', ${hash} FROM batch
     ) SELECT id FROM batch
   `),
     db.execute(await assignmentQuery(id, user, eventId)),
@@ -1056,8 +1110,9 @@ async function listIntakesFromDatabase(db: AppDatabase, user: AuthenticatedUser)
   const organizationFilter = user.role === "system_admin" ? sql`` : sql`WHERE b.assay_center_id = ${user.organizationId}`;
   const result = await db.execute<IntakeRow>(sql`
     SELECT b.id, b.public_id AS "publicId", b.metal, b.received_at AS "receivedAt", b.branch_name AS "branchName",
-      b.province, b.district, b.dispatch_reference AS "dispatchReference", b.initial_bullion_number AS "initialBullionNumber",
+      b.province, b.district, b.dispatch_reference AS "dispatchReference", b.act_number AS "actNumber", b.act_date::text AS "actDate", b.initial_bullion_number AS "initialBullionNumber",
       b.piece_count AS "pieceCount", b.delta::float AS delta, b.silver_titer::float AS "silverTiter", b.status, b.created_at AS "createdAt",
+      EXISTS (SELECT 1 FROM audit_logs audit WHERE audit.action = 'bullion_intake.updated' AND audit.entity_type = 'bullion_intake_batches' AND audit.entity_id = b.id) AS "wasEdited",
       c.id AS "customerId", c.display_name AS "customerName", u.full_name AS "receivedByName",
       COALESCE(json_agg(json_build_object('id', i.id, 'sequenceNo', i.sequence_no, 'analysisNo', i.examination_number::text,
         'bullionNo', i.bullion_no, 'grossWeightBeforeGrams', i.gross_weight_before_grams::float,
@@ -1089,17 +1144,17 @@ async function createIntakeInDatabase(
   // The separate lock statement ensures allocation reads a fresh snapshot after waiting.
   const results = await db.batch([
     db.execute(sql`SELECT pg_advisory_xact_lock(741206825)`),
-    db.execute<{ publicId: string; nextNumber: string; displayName: string; examinationNumbers: Record<string, string>; bullionNumbers: Record<string, string> }>(sql`
+    db.execute<{ publicId: string; nextNumber: string; nextActNumber: string; displayName: string; examinationNumbers: Record<string, string>; bullionNumbers: Record<string, string> }>(sql`
       WITH customer AS (${customerSequenceQuery(input.customerId, user)}),
       created AS (
         INSERT INTO bullion_intake_batches (
           id, public_id, assay_center_id, customer_id, received_by_user_id, metal, received_at,
-          branch_name, province, district, dispatch_reference, initial_bullion_number, piece_count, delta, silver_titer, status
+          branch_name, province, district, dispatch_reference, act_number, act_date, initial_bullion_number, piece_count, delta, silver_titer, status
         ) SELECT ${batchId}::uuid,
           c."nextRegistrationNumber",
           c."organizationId", c.id, ${user.id}::uuid, ${input.metal},
           ${input.receivedAt || now}::timestamptz, ${input.branchName || null}, ${input.province || null},
-          ${input.district || null}, ${input.dispatchReference || null}, c."nextNumber",
+          ${input.district || null}, ${input.dispatchReference || null}, c."nextActNumber", ${input.actDate || null}::date, c."nextNumber",
           ${items.length}, ${input.delta ?? 0}, ${input.silverTiter ?? null}, ${input.status ?? "draft"}
         FROM customer c RETURNING *
       ), inserted_items AS (
@@ -1137,7 +1192,7 @@ async function createIntakeInDatabase(
           jsonb_build_object('publicId', b.public_id, 'pieceCount', (SELECT count(*) FROM inserted_items)),
           'Bullion workflow action', ${entryHash} FROM created b
       )
-      SELECT b.public_id AS "publicId", b.initial_bullion_number AS "nextNumber", c."displayName",
+      SELECT b.public_id AS "publicId", b.initial_bullion_number AS "nextNumber", c."nextActNumber", c."displayName",
         (SELECT json_object_agg(id, examination_number::text) FROM inserted_items) AS "examinationNumbers",
         (SELECT json_object_agg(id, bullion_no) FROM inserted_items) AS "bullionNumbers"
       FROM created b JOIN customer c ON c.id = b.customer_id
@@ -1150,7 +1205,7 @@ async function createIntakeInDatabase(
     id: batchId, publicId: allocated.publicId, customerId: input.customerId, customerName: allocated.displayName,
     receivedByName: user.fullName, metal: input.metal, receivedAt: input.receivedAt || now,
     branchName: input.branchName, province: input.province, district: input.district,
-    dispatchReference: input.dispatchReference, initialBullionNumber: allocated.nextNumber,
+    dispatchReference: input.dispatchReference, actNumber: allocated.nextActNumber, actDate: input.actDate, initialBullionNumber: allocated.nextNumber,
     pieceCount: items.length, delta: input.delta, silverTiter: input.silverTiter ?? null, status: input.status, createdAt: now,
     items: items.map((item) => ({ ...item, bullionNo: allocated.bullionNumbers[item.id], analysisNo: allocated.examinationNumbers[item.id] })),
   };
@@ -1197,7 +1252,7 @@ function createIntakeInMemory(user: AuthenticatedUser, input: CreateBullionIntak
     id: crypto.randomUUID(), publicId: formatBullionNumber(registrationNumber.prefix, registrationNumber.value),
     customerId: input.customerId, customerName: "Харилцагч", receivedByName: user.fullName, metal: input.metal,
     receivedAt: input.receivedAt ?? now, branchName: input.branchName, province: input.province, district: input.district,
-    dispatchReference: input.dispatchReference, initialBullionNumber: input.initialBullionNumber,
+    dispatchReference: input.dispatchReference, actNumber: memoryNextActNumber(user), actDate: input.actDate, initialBullionNumber: input.initialBullionNumber,
     pieceCount: input.items.length, delta: input.delta, silverTiter: input.silverTiter ?? null, status: input.status, createdAt: now,
     items: input.items.map((item, index) => ({ ...item, id: crypto.randomUUID(), sequenceNo: index + 1 })),
   };
@@ -1213,7 +1268,7 @@ function normalizeIntake(value: unknown): CreateBullionIntakeInput {
   const body = object(value);
   return {
     customerId: text(body.customerId), metal: body.metal === "silver" ? "silver" : "gold", receivedAt: text(body.receivedAt),
-    branchName: text(body.branchName), province: text(body.province), district: text(body.district), dispatchReference: text(body.dispatchReference),
+    branchName: text(body.branchName), province: text(body.province), district: text(body.district), dispatchReference: text(body.dispatchReference), actNumber: text(body.actNumber), actDate: text(body.actDate),
     initialBullionNumber: text(body.initialBullionNumber), delta: number(body.delta), silverTiter: number(body.silverTiter), status: body.status === "sample_taken" ? "sample_taken" : body.status === "ready_for_sampling" ? "ready_for_sampling" : "draft",
     items: Array.isArray(body.items) ? body.items.map((item) => {
       const row = object(item);
@@ -1254,6 +1309,7 @@ function validateIntake(input: CreateBullionIntakeInput) {
   if (!input.items.length || input.items.length > 100) return "1-100 гулдмайн мөр оруулна уу.";
   if (input.items.some((item) => item.grossWeightBeforeGrams <= 0)) return "Гулдмайн жинг зөв оруулна уу.";
   if (input.receivedAt && !Number.isFinite(Date.parse(input.receivedAt))) return "Огноог зөв оруулна уу.";
+  if (input.actDate && (!/^\d{4}-\d{2}-\d{2}$/.test(input.actDate) || !Number.isFinite(Date.parse(input.actDate)))) return "Актны огноог зөв оруулна уу.";
   if (input.items.some((item) => item.bullionNo.length > 80 || (item.analysisNo?.length ?? 0) > 80
     || [item.grossWeightBeforeGrams, item.grossWeightAfterGrams, item.slagWeightGrams, item.sampleWeightMilligrams].some((value) => value != null && (!Number.isFinite(value) || value < 0 || value >= 10000000000)))) return "Жингийн утга буруу байна.";
   if (input.status === "sample_taken" && input.items.some((item) => (item.sampleWeightMilligrams ?? 0) <= 0 || (item.grossWeightAfterGrams ?? 0) <= 0)) return "Хайлалтын дараах жин, дээжийн жинг оруулна уу.";

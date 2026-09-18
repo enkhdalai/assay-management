@@ -1,11 +1,19 @@
 import { sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { createDatabase } from "../../../../packages/db/src";
+import { decryptField, isValidFieldEncryptionKey } from "../../../../packages/security/src";
 import { isCenterManager } from "../../../../packages/shared/src/workspace-access";
 import type { EdgeApiEnv } from "../app";
 import { getAuthenticatedUserFromRequest } from "../auth/http";
 
 export const reportRoutes = new Hono<{ Bindings: EdgeApiEnv }>();
+
+async function revealRegistrationNumber(value: string | null, encryptionKey?: string): Promise<string | null> {
+  if (!value) return null;
+  if (!value.startsWith("v1.")) return value;
+  if (!isValidFieldEncryptionKey(encryptionKey)) return null;
+  try { return await decryptField(value, encryptionKey); } catch { return null; }
+}
 
 reportRoutes.get("/summary", async (c) => {
   const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
@@ -95,23 +103,57 @@ reportRoutes.get("/", async (c) => {
   if (![from, to].every((date) => /^\d{4}-\d{2}-\d{2}$/.test(date) && Number.isFinite(Date.parse(date))
     && new Date(date).toISOString().slice(0, 10) === date) || from > to) return c.json({ ok: false }, 400);
   if (!c.env.DATABASE_URL) {
-    const { getMemoryReport } = await import("./routes");
-    return c.json({ ok: true, data: getMemoryReport(user, from, to) });
+    const { getMemoryPrivateAssayReport } = await import("./routes");
+    return c.json({ ok: true, data: getMemoryPrivateAssayReport(user, from, to) });
   }
   const result = await createDatabase(c.env.DATABASE_URL).execute(sql`
-    SELECT b.metal, count(i.id)::int AS "bullionCount",
-      count(i.id) FILTER (WHERE i.sample_weight_milligrams > 0)::int AS "sampleCount",
-      COALESCE(sum(i.gross_weight_before_grams), 0)::float AS "receivedGrams",
-      COALESCE(sum(i.gross_weight_after_grams), 0)::float AS "afterGrams",
-      count(i.id) FILTER (WHERE e.status = 'submitted')::int AS "submittedCount"
-    FROM bullion_intake_batches b JOIN bullion_intake_items i ON i.batch_id = b.id
-    LEFT JOIN LATERAL (SELECT status FROM bullion_examination_revisions WHERE bullion_item_id = i.id ORDER BY revision_no DESC LIMIT 1) e ON true
+    SELECT
+      c.display_name AS "organizationName",
+      c.registration_number_encrypted AS "registrationNumberEncrypted",
+      b.received_at AS "receivedAt",
+      b.public_id AS "registrationNo",
+      i.bullion_no AS "bullionNo",
+      i.examination_number::text AS "analysisNo",
+      b.metal,
+      i.gross_weight_before_grams::float AS "grossWeightBeforeGrams",
+      i.gross_weight_after_grams::float AS "grossWeightAfterGrams",
+      i.sample_weight_milligrams::float AS "sampleWeightMilligrams",
+      CASE WHEN i.gross_weight_after_grams IS NULL THEN NULL
+        ELSE (i.gross_weight_before_grams - i.gross_weight_after_grams - COALESCE(i.slag_weight_grams, 0))::float END AS "lossGrams",
+      e.sample_weight_grams::float AS "receivedWeightGrams",
+      (SELECT entry ->> 'reading' FROM jsonb_array_elements(COALESCE(e.measurement_entries, '[]'::jsonb)) entry
+        WHERE entry ->> 'label' = 'Дээжийн үлдэгдэл жин' LIMIT 1)::float AS "remainingMilligrams",
+      (SELECT entry ->> 'reading' FROM jsonb_array_elements(COALESCE(e.measurement_entries, '[]'::jsonb)) entry
+        WHERE entry ->> 'label' = 'Королько, корточка' LIMIT 1)::float AS "korolkoMilligrams",
+      e.gold_result::float AS "goldFinenessPermille",
+      e.silver_result::float AS "silverFinenessPermille",
+      COALESCE(e.delta, b.delta)::float AS delta,
+      b.dispatch_reference AS origin,
+      COALESCE(chemist.full_name, assigned_chemist.full_name) AS "chemistName",
+      b.act_number AS "actNumber",
+      b.act_date::text AS "actDate"
+    FROM bullion_intake_batches b
+    JOIN bullion_intake_items i ON i.batch_id = b.id
+    JOIN customers c ON c.id = b.customer_id
+    LEFT JOIN LATERAL (
+      SELECT * FROM bullion_examination_revisions
+      WHERE bullion_item_id = i.id
+      ORDER BY revision_no DESC
+      LIMIT 1
+    ) e ON true
+    LEFT JOIN users chemist ON chemist.id = e.entered_by_user_id
+    LEFT JOIN users assigned_chemist ON assigned_chemist.id = i.assigned_chemist_id
     WHERE (${user.role} = 'system_admin' OR b.assay_center_id = ${user.organizationId})
       AND b.received_at >= (${from}::date::timestamp AT TIME ZONE 'Asia/Ulaanbaatar')
       AND b.received_at < ((${to}::date + 1)::timestamp AT TIME ZONE 'Asia/Ulaanbaatar')
-    GROUP BY b.metal
+    ORDER BY b.received_at DESC, b.public_id DESC, i.sequence_no ASC
   `);
-  return c.json({ ok: true, data: Array.isArray(result) ? result : result.rows });
+  const sourceRows = (Array.isArray(result) ? result : result.rows) as Array<Record<string, unknown> & { registrationNumberEncrypted: string | null }>;
+  const data = await Promise.all(sourceRows.map(async ({ registrationNumberEncrypted, ...row }) => ({
+    ...row,
+    customerRegistrationNumber: await revealRegistrationNumber(registrationNumberEncrypted, c.env.FIELD_ENCRYPTION_KEY),
+  })));
+  return c.json({ ok: true, data });
 });
 
 function ulaanbaatarIsoDate(): string {

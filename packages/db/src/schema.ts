@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   check,
+  date,
   index,
   integer,
   jsonb,
@@ -372,6 +373,8 @@ export const bullionIntakeBatches = pgTable(
     province: varchar("province", { length: 120 }),
     district: varchar("district", { length: 120 }),
     dispatchReference: varchar("dispatch_reference", { length: 120 }),
+    actNumber: varchar("act_number", { length: 80 }),
+    actDate: date("act_date"),
     initialBullionNumber: varchar("initial_bullion_number", { length: 80 }),
     pieceCount: integer("piece_count").notNull(),
     delta: numeric("delta", { precision: 14, scale: 6 }).default("0").notNull(),

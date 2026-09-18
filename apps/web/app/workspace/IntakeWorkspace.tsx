@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent, type InputHTMLAttributes, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { BadgeCheck, ClipboardCheck, FlaskConical, Minus, PackageCheck, Plus, RefreshCw, UsersRound } from "lucide-react";
+import { BadgeCheck, ClipboardCheck, FlaskConical, LoaderCircle, Minus, PackageCheck, Pencil, PencilLine, Plus, RefreshCw, UsersRound } from "lucide-react";
 import type { AnonymousSample, BullionIntakeBatchRecord, CreateBullionIntakeInput } from "../../../../packages/shared/src";
 import { CreateCustomerDialog } from "../CustomerComponents";
 import { WorkspaceDialog } from "../OperationalWorkspace";
@@ -18,10 +18,43 @@ type DailyChemist = { id: string; fullName: string; status: string; onVacation: 
 type DailyChemistSchedule = { date: string; goldChemistIds: string[]; silverChemistIds: string[]; chemists: DailyChemist[] };
 const newRow = (): WeightRow => ({ bullionNo: "", before: "", after: "", slag: "", sample: "" });
 const optional = (value: string) => value.trim() === "" ? undefined : Number(value);
+const formattedNumber = (value: string) => {
+  if (!/^\d+(?:\.\d+)?$/.test(value)) return value;
+  const [whole, fraction] = value.split(".");
+  return `${Number(whole).toLocaleString("en-US")}${fraction == null ? "" : `.${fraction}`}`;
+};
+function FormattedNumberInput({ value, onValueChange, ...props }: Omit<InputHTMLAttributes<HTMLInputElement>, "type" | "value" | "onChange"> & { value: string; onValueChange(value: string): void }) {
+  const [focused, setFocused] = useState(false);
+  return <input {...props} type="text" inputMode="decimal" value={focused ? value : formattedNumber(value)} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} onChange={(event) => {
+    const next = event.target.value.replaceAll(",", "");
+    if (/^\d*(?:\.\d*)?$/.test(next)) onValueChange(next);
+  }} />;
+}
 const lossValue = (row: WeightRow) => row.before.trim() && row.after.trim()
   && Number.isFinite(Number(row.before)) && Number.isFinite(Number(row.after)) && Number.isFinite(optional(row.slag) ?? 0)
   ? String(Number((Number(row.before) - Number(row.after) - (optional(row.slag) ?? 0)).toFixed(4))) : "";
-const intakeStatus = (status: BullionIntakeBatchRecord["status"]) => status === "sample_taken" ? "Дээж илгээсэн" : status === "ready_for_sampling" ? "Эрхлэгчид илгээсэн" : "Хүлээн авалт / хайлалт";
+type IntakeWorkflowStatus = "registered" | "awaiting_assignment" | "assigned" | "awaiting_review" | "approved" | "esign_approved";
+function intakeWorkflowStatus(batch: BullionIntakeBatchRecord, samples: AnonymousSample[]): IntakeWorkflowStatus {
+  const batchSamples = samples.filter((sample) => sample.batchId === batch.id);
+  const hasAllSamples = batch.items.length > 0 && batchSamples.length === batch.items.length;
+  const allSigned = hasAllSamples && batchSamples.every((sample) => sample.certificateSignatureStatus === "signed" || sample.certificateSignatureStatus === "cryptographically_verified");
+  const allApproved = hasAllSamples && batchSamples.every((sample) => sample.status === "approved");
+  const allSubmitted = hasAllSamples && batchSamples.every((sample) => sample.status === "submitted" || sample.status === "approved");
+  if (allSigned) return "esign_approved";
+  if (allApproved) return "approved";
+  if (allSubmitted) return "awaiting_review";
+  if (batch.status === "sample_taken") return "assigned";
+  if (batch.status === "ready_for_sampling") return "awaiting_assignment";
+  return "registered";
+}
+const intakeWorkflowStatusLabel: Record<IntakeWorkflowStatus, string> = {
+  registered: "Бүртгэсэн",
+  awaiting_assignment: "Хүлээгдэж байна",
+  assigned: "Шинжилгээ",
+  awaiting_review: "Хянуулахаар хүлээгдэж байна",
+  approved: "Баталсан",
+  esign_approved: "eSign баталсан",
+};
 const examinationNumber = (value?: string) => value ? value.padStart(4, "0") : "-";
 const bullionNumber = (firstNumber: string, offset = 0) => {
   if (!/^\d+$/.test(firstNumber)) return "";
@@ -49,18 +82,28 @@ function centerToday() {
 
 export function IntakeWorkspace({ manager }: { manager: boolean }) {
   const [batches, setBatches] = useState<BullionIntakeBatchRecord[]>([]);
+  const [sampleRecords, setSampleRecords] = useState<AnonymousSample[]>([]);
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [search, setSearch] = useState("");
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
+  const [activeColumnFilter, setActiveColumnFilter] = useState<string | null>(null);
   const [editing, setEditing] = useState<BullionIntakeBatchRecord | "gold" | "silver" | null>(null);
+  const [viewing, setViewing] = useState<BullionIntakeBatchRecord | null>(null);
   const [tracking, setTracking] = useState<{ batch: BullionIntakeBatchRecord; samples: AnonymousSample[] } | null>(null);
   const [openingTrackingId, setOpeningTrackingId] = useState<string | null>(null);
   const [creatingCustomer, setCreatingCustomer] = useState(false);
+  const [jewelryRegistrationOpen, setJewelryRegistrationOpen] = useState(false);
   const [dailyChemistScheduleOpen, setDailyChemistScheduleOpen] = useState(false);
-  const refresh = useCallback(() => Promise.all([api<{ data: BullionIntakeBatchRecord[] }>("/api/v1/bullion/intakes"), api<{ data: CustomerOption[] }>("/api/v1/customers/lookup")])
-    .then(([intakes, lookup]) => { setBatches(intakes.data); setCustomers(lookup.data); setError(""); })
-    .catch((error) => setError(error.message)).finally(() => setLoading(false)), []);
+  const refresh = useCallback(() => {
+    setLoading(true);
+    return Promise.all([
+      api<{ data: BullionIntakeBatchRecord[] }>("/api/v1/bullion/intakes", { cache: "no-store" }),
+      api<{ data: CustomerOption[] }>("/api/v1/customers/lookup", { cache: "no-store" }),
+      manager ? api<{ data: AnonymousSample[] }>("/api/v1/bullion/samples", { cache: "no-store" }) : Promise.resolve({ data: [] as AnonymousSample[] }),
+    ]).then(([intakes, lookup, samples]) => { setBatches(intakes.data); setCustomers(lookup.data); setSampleRecords(samples.data); setError(""); })
+      .catch((error) => setError(error.message)).finally(() => setLoading(false));
+  }, [manager]);
   useEffect(() => { void refresh(); }, [refresh]);
   const openTracking = useCallback(async (batchId: string) => {
     setOpeningTrackingId(batchId);
@@ -83,19 +126,46 @@ export function IntakeWorkspace({ manager }: { manager: boolean }) {
   const refreshTracking = useCallback(async () => {
     if (tracking) await openTracking(tracking.batch.id);
   }, [openTracking, tracking]);
-  const filtered = batches.filter((batch) => `${batch.publicId} ${batch.customerName} ${batch.items.map((item) => item.bullionNo).join(" ")}`.toLowerCase().includes(search.trim().toLowerCase()));
+  const intakeRowValues = (batch: BullionIntakeBatchRecord) => ({
+    registrationNo: batch.publicId,
+    customer: batch.customerName,
+    receivedAt: intakeDate(batch.receivedAt || batch.createdAt),
+    metal: batch.metal === "gold" ? "Алт" : "Мөнгө",
+    pieceCount: String(batch.pieceCount),
+    receivedBy: batch.receivedByName || "-",
+    status: intakeWorkflowStatusLabel[intakeWorkflowStatus(batch, sampleRecords)],
+  });
+  const workflowPriority: Record<IntakeWorkflowStatus, number> = {
+    registered: 0,
+    awaiting_assignment: 1,
+    assigned: 2,
+    awaiting_review: 3,
+    approved: 4,
+    esign_approved: 5,
+  };
+  const filtered = batches.filter((batch) => {
+    const fields = intakeRowValues(batch);
+    const matchesColumns = Object.entries(columnFilters).every(([column, value]) => !value.trim() || fields[column as keyof typeof fields].toLocaleLowerCase().includes(value.trim().toLocaleLowerCase()));
+    return matchesColumns;
+  }).sort((left, right) => manager ? workflowPriority[intakeWorkflowStatus(left, sampleRecords)] - workflowPriority[intakeWorkflowStatus(right, sampleRecords)] : 0);
+  function HeaderFilter({ column, text, label = text }: { column: string; text: string; label?: ReactNode }) {
+    const isActive = activeColumnFilter === column;
+    if (isActive) return <input className="report-column-filter-input intake-column-filter-input" aria-label={`${text} хайх`} autoFocus value={columnFilters[column] ?? ""} placeholder={text} onBlur={() => setActiveColumnFilter(null)} onChange={(event) => setColumnFilters((current) => ({ ...current, [column]: event.target.value }))} onKeyDown={(event) => { if (event.key === "Escape") { setColumnFilters((current) => ({ ...current, [column]: "" })); setActiveColumnFilter(null); } }} />;
+    return <button className={`report-column-filter${columnFilters[column] ? " is-filtered" : ""}`} type="button" title={`${text} хайх`} onClick={() => setActiveColumnFilter(column)}>{label}</button>;
+  }
   const headerActions = typeof document === "undefined" ? null : document.getElementById("intake-header-actions");
   return <section className="workspace-section">
-    {headerActions && createPortal(<><button type="button" className="secondary-button" onClick={() => setCreatingCustomer(true)}>Харилцагч нэмэх</button>{manager && <button type="button" className="secondary-button" onClick={() => setDailyChemistScheduleOpen(true)}><UsersRound size={18} aria-hidden="true" />Өнөөдрийн химич</button>}</>, headerActions)}
-    <div className="workspace-toolbar"><input aria-label="Бүртгэл хайх" placeholder="Дугаар, харилцагчаар хайх" value={search} onChange={(event) => setSearch(event.target.value)} />
-      <button type="button" className="secondary-button intake-refresh-button" aria-label="Шинэчлэх" title="Шинэчлэх" disabled={loading} onClick={refresh}><RefreshCw size={20} aria-hidden="true" /></button>
+    {headerActions && createPortal(<><button type="button" className="secondary-button" onClick={() => setCreatingCustomer(true)}>Харилцагч нэмэх</button>{manager && <button type="button" className="secondary-button" onClick={() => setDailyChemistScheduleOpen(true)}><UsersRound size={18} aria-hidden="true" />Химичийн тохиргоо</button>}</>, headerActions)}
+    <div className="workspace-toolbar intake-list-toolbar"><div className="intake-list-actions"><button type="button" className="secondary-button intake-refresh-button" aria-label="Шинэчлэх" title="Шинэчлэх" disabled={loading} onClick={refresh}><RefreshCw size={20} className={loading ? "is-spinning" : undefined} aria-hidden="true" /></button>
       <button type="button" className="primary-button" onClick={() => setEditing("gold")}>Алтан гулдмай бүртгэх</button>
-      <button type="button" className="primary-button" onClick={() => setEditing("silver")}>Мөнгөн гулдмай бүртгэх</button></div>
+      <button type="button" className="primary-button" onClick={() => setEditing("silver")}>Мөнгөн гулдмай бүртгэх</button><button type="button" className="primary-button" onClick={() => setJewelryRegistrationOpen(true)}>Алт, мөнгөн эдлэл</button></div></div>
     {error && <p role="alert" className="login-error">{error}</p>}
-    {loading ? <WorkspaceLoadingSkeleton /> : <div className="workspace-table-scroll"><table className="workspace-table"><thead><tr><th>Бүртгэл №</th><th>Харилцагч</th><th>Огноо</th><th>Металл</th><th>Гулдмайн тоо</th><th>Бүртгэсэн ажилтан</th><th>Төлөв</th></tr></thead><tbody>{filtered.map((batch) => <tr key={batch.id} className="intake-batch-row" tabIndex={0} onClick={() => setEditing(batch)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setEditing(batch); } }} aria-label={`${batch.publicId} бүртгэлийн дэлгэрэнгүй`}><td><strong className="registration-number">{batch.publicId}</strong></td><td>{batch.customerName}</td><td>{intakeDate(batch.receivedAt || batch.createdAt)}</td><td>{batch.metal === "gold" ? "Алт" : "Мөнгө"}</td><td>{batch.pieceCount}</td><td>{batch.receivedByName || "-"}</td><td><button type="button" className="secondary-button intake-status-button" disabled={openingTrackingId === batch.id} onClick={(event) => { event.stopPropagation(); void openTracking(batch.id); }} onKeyDown={(event) => event.stopPropagation()}>{openingTrackingId === batch.id ? "Уншиж байна..." : intakeStatus(batch.status)}</button></td></tr>)}</tbody></table>{filtered.length === 0 && <p>Бүртгэл олдсонгүй.</p>}</div>}
+    {loading ? <WorkspaceLoadingSkeleton /> : <div className="workspace-table-scroll"><table className="workspace-table intake-batch-table"><thead><tr><th><HeaderFilter column="registrationNo" text="Бүртгэл №" /></th><th><HeaderFilter column="customer" text="Харилцагч" /></th><th><HeaderFilter column="receivedAt" text="Огноо" /></th><th><HeaderFilter column="metal" text="Металл" /></th><th><HeaderFilter column="pieceCount" text="Гулдмай" /></th><th><HeaderFilter column="receivedBy" text="Бүртгэсэн ажилтан" /></th><th>Төлөв</th></tr></thead><tbody>{filtered.map((batch) => { const status = intakeWorkflowStatus(batch, sampleRecords); const opening = openingTrackingId === batch.id; return <tr key={batch.id} className="intake-batch-row is-detail" tabIndex={0} onClick={() => setViewing(batch)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setViewing(batch); } }} aria-label={`${batch.publicId} бүртгэлийн дэлгэрэнгүйг харах`}><td><strong className="registration-number">{batch.publicId}</strong></td><td>{batch.customerName}</td><td>{intakeDate(batch.receivedAt || batch.createdAt)}</td><td>{batch.metal === "gold" ? "Алт" : "Мөнгө"}</td><td>{batch.pieceCount}</td><td>{batch.receivedByName || "-"}</td><td><div className="intake-status-cell"><button type="button" className={`intake-workflow-status is-${status}`} disabled={opening} title="Ажлын явц харах" onClick={(event) => { event.stopPropagation(); void openTracking(batch.id); }} onKeyDown={(event) => event.stopPropagation()}>{opening ? <LoaderCircle className="is-spinning" size={18} aria-label="Ачаалж байна" /> : intakeWorkflowStatusLabel[status]}</button>{manager && <button type="button" className="secondary-button intake-edit-button" aria-label={`${batch.publicId} бүртгэл засах`} title="Бүртгэл засах" onClick={(event) => { event.stopPropagation(); setEditing(batch); }} onKeyDown={(event) => event.stopPropagation()}><Pencil size={17} aria-hidden="true" /></button>}</div></td></tr>; })}</tbody></table>{filtered.length === 0 && <p>Бүртгэл олдсонгүй.</p>}</div>}
+    {viewing && <IntakeDialog key={`view-${viewing.id}`} batch={viewing} customers={customers} manager={manager} editable={false} onClose={() => setViewing(null)} onSaved={() => undefined} />}
     {editing && <IntakeDialog key={typeof editing === "string" ? editing : editing.id} batch={typeof editing === "string" ? null : editing} initialMetal={typeof editing === "string" ? editing : editing.metal} customers={customers} manager={manager} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); void refresh(); }} />}
     {tracking && <AssignmentDialog batch={tracking.batch} samples={tracking.samples} manager={manager} onClose={() => setTracking(null)} onSaved={refreshTracking} />}
     {creatingCustomer && <CreateCustomerDialog onClose={() => setCreatingCustomer(false)} onCreated={(customer) => { setCustomers((current) => [...current, { ...customer, registrationNumber: customer.registrationNumberMasked, province: customer.province ?? null, district: customer.district ?? null, origin: null }]); setCreatingCustomer(false); }} />}
+    {jewelryRegistrationOpen && <WorkspaceDialog title="Алт, мөнгөн эдлэл бүртгэх" onClose={() => setJewelryRegistrationOpen(false)}><form className="workspace-form jewelry-registration-form" /></WorkspaceDialog>}
     {dailyChemistScheduleOpen && <DailyChemistScheduleDialog onClose={() => setDailyChemistScheduleOpen(false)} />}
   </section>;
 }
@@ -216,39 +286,56 @@ function BatchWorkflowTimeline({ batch, samples }: { batch: BullionIntakeBatchRe
   </ol>;
 }
 
-export function IntakeDialog({ batch, initialMetal = "gold", customers, manager, onClose, onSaved }: {
-  batch: BullionIntakeBatchRecord | null; initialMetal?: "gold" | "silver"; customers: CustomerOption[]; manager: boolean;
+export function IntakeDialog({ batch, initialMetal = "gold", customers, manager, editable = true, onClose, onSaved }: {
+  batch: BullionIntakeBatchRecord | null; initialMetal?: "gold" | "silver"; customers: CustomerOption[]; manager: boolean; editable?: boolean;
   onClose(): void; onSaved(): void;
 }) {
   const [rows, setRows] = useState<WeightRow[]>(batch ? batch.items.map((item) => ({ id: item.id, bullionNo: item.bullionNo ?? "", before: String(item.grossWeightBeforeGrams), after: item.grossWeightAfterGrams == null ? "" : String(item.grossWeightAfterGrams), slag: item.slagWeightGrams == null ? "" : String(item.slagWeightGrams), sample: item.sampleWeightMilligrams == null ? "" : String(item.sampleWeightMilligrams) })) : [newRow()]);
+  const [quantity, setQuantity] = useState(() => String(batch?.items.length ?? 1));
   const [customerId, setCustomerId] = useState(batch?.customerId || "");
+  const [initialBullionNumber, setInitialBullionNumber] = useState(batch?.initialBullionNumber ?? "");
   const [location, setLocation] = useState({ province: batch?.province ?? "", district: batch?.district ?? "", origin: batch?.dispatchReference ?? "" });
   const metal = batch?.metal ?? initialMetal;
-  const [sequence, setSequence] = useState<{ customerId: string; nextNumber: string; prefix: string } | null>(null);
+  const [sequence, setSequence] = useState<{ customerId: string; nextNumber: string; nextActNumber: string; nextAnalysisNumber: string; prefix: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const locked = !!batch && batch.status !== "draft" && !(manager && batch.status === "ready_for_sampling");
+  const locked = !!batch && (!editable || (!manager && batch.status !== "draft"));
   const meltingComplete = rows.every((row) => row.after.trim() !== "" && Number.isFinite(Number(row.after))
     && Number(row.after) > 0 && Number(row.after) <= Number(row.before));
   const sampleComplete = !manager || rows.every((row) => row.sample.trim() !== "" && Number.isFinite(Number(row.sample)) && Number(row.sample) > 0);
   const startNumber = batch?.initialBullionNumber || (sequence?.customerId === customerId ? sequence.nextNumber : "");
+  const previewAnalysisNumber = (index: number) => {
+    const start = sequence?.customerId === customerId ? Number(sequence.nextAnalysisNumber) : Number.NaN;
+    return Number.isInteger(start) && start > 0 ? examinationNumber(String(start + index)) : "";
+  };
   useEffect(() => {
     if (batch || !customerId) return;
     let active = true;
-    void api<{ nextNumber: string; prefix: string }>(`/api/v1/bullion/intakes/next-number?customerId=${encodeURIComponent(customerId)}`)
-      .then((result) => { if (active) { setSequence({ customerId, nextNumber: result.nextNumber, prefix: result.prefix ?? "" }); setError(""); } })
+    void api<{ nextNumber: string; nextActNumber: string; nextAnalysisNumber: string; prefix: string }>(`/api/v1/bullion/intakes/next-number?customerId=${encodeURIComponent(customerId)}`)
+      .then((result) => { if (active) { setSequence({ customerId, nextNumber: result.nextNumber, nextActNumber: result.nextActNumber, nextAnalysisNumber: result.nextAnalysisNumber, prefix: result.prefix ?? "" }); setError(""); } })
       .catch((error) => { if (active) setError(error.message); });
     return () => { active = false; };
   }, [batch, customerId]);
   function changeQuantity(value: string) {
+    setQuantity(value);
+    if (value === "") return;
     const count = Number(value);
     if (!Number.isInteger(count) || count < 1 || count > 100) return;
     if (count < rows.length && rows.slice(count).some((row) => row.before || row.after || row.slag || row.sample)) {
-      setError("Жин оруулсан мөрийг Хасах товчоор хасна уу."); return;
+      setError("Жин оруулсан мөрийг Хасах товчоор хасна уу."); setQuantity(String(rows.length)); return;
     }
     setRows((current) => count > current.length ? [...current, ...Array.from({ length: count - current.length }, newRow)] : current.slice(0, count));
   }
+  function normalizeQuantity() {
+    const count = Number(quantity);
+    if (!Number.isInteger(count) || count < 1 || count > 100) setQuantity(String(rows.length));
+  }
   function update(index: number, field: keyof WeightRow, value: string) { setRows((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, [field]: value } : row)); }
+  function updateInitialBullionNumber(value: string) {
+    setInitialBullionNumber(value);
+    if (!/^\d+$/.test(value)) return;
+    setRows((current) => current.map((row, index) => ({ ...row, bullionNo: bullionNumber(value, index) })));
+  }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!batch && !startNumber) return;
@@ -264,37 +351,37 @@ export function IntakeDialog({ batch, initialMetal = "gold", customers, manager,
     }
     try {
       if (batch) {
-        await api(`/api/v1/bullion/intakes/${batch.id}`, { method: "PATCH", body: JSON.stringify({ status, items: rows.map((row) => ({ id: row.id, grossWeightAfterGrams: optional(row.after), slagWeightGrams: optional(row.slag), ...(manager ? { sampleWeightMilligrams: optional(row.sample) } : {}) })) }) });
+        await api(`/api/v1/bullion/intakes/${batch.id}`, { method: "PATCH", body: JSON.stringify({ status, ...(manager ? { initialBullionNumber, } : {}), items: rows.map((row) => ({ id: row.id, grossWeightAfterGrams: optional(row.after), slagWeightGrams: optional(row.slag), ...(manager ? { bullionNo: row.bullionNo.trim(), grossWeightBeforeGrams: Number(row.before), sampleWeightMilligrams: optional(row.sample) } : {}) })) }) });
       } else {
-        const input: CreateBullionIntakeInput = { customerId, metal: metal === "silver" ? "silver" : "gold", receivedAt: String(form.get("receivedAt")), branchName: String(form.get("branchName") || ""), province: String(form.get("province") || ""), district: String(form.get("district") || ""), dispatchReference: String(form.get("origin") || ""), delta: metal === "silver" ? 0 : Number(form.get("delta")), silverTiter: metal === "silver" ? Number(form.get("silverTiter")) : undefined, status,
+        const input: CreateBullionIntakeInput = { customerId, metal: metal === "silver" ? "silver" : "gold", receivedAt: String(form.get("receivedAt")), branchName: String(form.get("branchName") || ""), province: String(form.get("province") || ""), district: String(form.get("district") || ""), dispatchReference: String(form.get("origin") || ""), actDate: String(form.get("receivedAt")), delta: metal === "silver" ? 0 : Number(form.get("delta")), silverTiter: metal === "silver" ? Number(form.get("silverTiter")) : undefined, status,
           items: rows.map((row) => ({ bullionNo: row.bullionNo.trim(), grossWeightBeforeGrams: Number(row.before), grossWeightAfterGrams: optional(row.after), slagWeightGrams: optional(row.slag), ...(manager ? { sampleWeightMilligrams: optional(row.sample) } : {}) })) };
         await api("/api/v1/bullion/intakes", { method: "POST", body: JSON.stringify(input) });
       }
       onSaved();
     } catch (error) { setError((error as Error).message); } finally { setSaving(false); }
   }
-  return <WorkspaceDialog title={metal === "silver" ? "Мөнгөн гулдмайн дээж авах" : "Алтан гулдмайн дээж авах"} onClose={() => { if (!saving) onClose(); }} headerActions={batch ? <span className="intake-registration-summary"><span className="intake-registration-person">Бүртгэсэн: {batch.receivedByName || "-"}</span><time>{assignmentDate(batch.createdAt)}</time></span> : undefined}>
+  return <WorkspaceDialog title={metal === "silver" ? "Мөнгөн гулдмайн дээж авах" : "Алтан гулдмайн дээж авах"} onClose={() => { if (!saving) onClose(); }} headerActions={batch ? <span className="intake-registration-summary">{batch.wasEdited && <span className="intake-registration-edited" title="Засварлагдсан" aria-label="Засварлагдсан"><PencilLine size={15} aria-hidden="true" /></span>}<span className="intake-registration-person">Бүртгэсэн: {batch.receivedByName || "-"}</span><time>{assignmentDate(batch.createdAt)}</time></span> : undefined}>
     <form onSubmit={submit} className="workspace-form"><fieldset disabled={saving || locked}>
       {!batch && <div className="workspace-form-grid">
         <label htmlFor="intake-date">Огноо<CalendarDateInput id="intake-date" name="receivedAt" defaultValue={new Date().toISOString().slice(0, 10)} /></label>
-        <label htmlFor="intake-customer">Харилцагч байгууллага<CustomerCombobox inputId="intake-customer" customers={customers} value={customerId} onChange={(customer) => { setSequence(null); setCustomerId(customer?.id ?? ""); setLocation({ province: customer?.province ?? "", district: customer?.district ?? "", origin: customer?.origin ?? "" }); }} /></label>
+        <label htmlFor="intake-customer">Харилцагч байгууллага<CustomerCombobox inputId="intake-customer" customers={customers} value={customerId} onChange={(customer) => { const nextCustomerId = customer?.id ?? ""; if (nextCustomerId !== customerId) setSequence(null); setCustomerId(nextCustomerId); setLocation({ province: customer?.province ?? "", district: customer?.district ?? "", origin: customer?.origin ?? "" }); }} /></label>
         <label>Гулдмайн эхлэх дугаар<input className="intake-auto-number" readOnly aria-readonly="true" value={startNumber} placeholder={customerId && !startNumber ? "Ачаалж байна..." : ""} /></label>
-        <div className="intake-secondary-fields"><label>Салбар байгууллага<input name="branchName" maxLength={255} /></label><label>Тоо ширхэг<input type="number" min="1" max="100" step="1" value={rows.length} onChange={(event) => changeQuantity(event.target.value)} /></label>{metal === "silver" ? <label>Титр<input className="intake-auto-number" name="silverTiter" type="number" step="0.01" readOnly aria-readonly="true" defaultValue="5555.00" required /></label> : <label>Делта<input className="intake-auto-number" name="delta" type="number" step="0.000001" readOnly aria-readonly="true" defaultValue="-0.03125" required /></label>}</div>
+        <div className="intake-secondary-fields"><label>Салбар байгууллага<input name="branchName" maxLength={255} /></label><label>Тоо ширхэг<input type="number" min="1" max="100" step="1" value={quantity} onChange={(event) => changeQuantity(event.target.value)} onBlur={normalizeQuantity} /></label>{metal === "silver" ? <label>Титр<input className="intake-auto-number" name="silverTiter" type="number" step="0.01" readOnly aria-readonly="true" defaultValue="5555.00" required /></label> : <label>Делта<input className="intake-auto-number" name="delta" type="number" step="0.000001" readOnly aria-readonly="true" defaultValue="-0.03125" required /></label>}</div>
         <div className="intake-location-fields"><label>Аймаг, хот<input name="province" maxLength={120} value={location.province} onChange={(event) => setLocation((current) => ({ ...current, province: event.target.value }))} /></label><label>Сум, дүүрэг<input name="district" maxLength={120} value={location.district} onChange={(event) => setLocation((current) => ({ ...current, district: event.target.value }))} /></label><label>Гарал, үүсэл<input name="origin" maxLength={120} value={location.origin} onChange={(event) => setLocation((current) => ({ ...current, origin: event.target.value }))} /></label></div>
       </div>}
-      {batch && <div className="workspace-form-grid"><label>Харилцагч байгууллага<input readOnly value={batch.customerName} /></label><label>Гулдмайн эхлэх дугаар<input className="intake-auto-number" readOnly aria-readonly="true" value={batch.initialBullionNumber || "-"} /></label><label>Тоо ширхэг<input readOnly value={rows.length} /></label></div>}
+      {batch && <div className="workspace-form-grid intake-existing-summary"><label>Харилцагч байгууллага<input readOnly value={batch.customerName} /></label><label>Гулдмайн эхлэх дугаар<input className={manager && editable ? undefined : "intake-auto-number"} readOnly={!manager || !editable} aria-readonly={!manager || !editable} inputMode="numeric" maxLength={12} value={manager && editable ? initialBullionNumber : batch.initialBullionNumber || "-"} onChange={(event) => updateInitialBullionNumber(event.target.value)} /></label><label>Тоо ширхэг<input readOnly value={rows.length} /></label></div>}
       <div className="workspace-table-scroll"><table className="workspace-table weight-table"><thead><tr><th rowSpan={2}>Шинжилгээний №</th><th rowSpan={2}>Гулдмайн №</th><th colSpan={2}>Хайлалтын жин /гр/</th><th rowSpan={2}>Шлак /гр/</th><th rowSpan={2}>Хорогдол /гр/</th>{manager && <th rowSpan={2}>Дээжийн жин /мг/</th>}{!batch && <th rowSpan={2}>Үйлдэл</th>}</tr><tr><th>Өмнөх</th><th>Дараах</th></tr></thead><tbody>{rows.map((row, index) => <tr key={row.id || index}>
-        <td><input aria-label={`Шинжилгээ ${index + 1} дугаар`} readOnly value={batch?.items[index]?.analysisNo || ""} placeholder="Автомат" /></td>
+        <td><input className="intake-auto-number" aria-label={`Шинжилгээ ${index + 1} дугаар`} readOnly aria-readonly="true" value={batch?.items[index]?.analysisNo || previewAnalysisNumber(index)} placeholder={customerId ? "Ачаалж байна..." : ""} /></td>
         <td><input className="intake-auto-number" aria-label={`Гулдмай ${index + 1} дугаар`} readOnly aria-readonly="true" value={batch ? row.bullionNo : bullionNumber(startNumber, index)} /></td>
-        {(["before", "after"] as const).map((field) => <td key={field}><input aria-label={`${index + 1} ${field}`} type="number" min="0.0001" max={field === "after" && row.before ? Number(row.before) : undefined} step="0.0001" required={field === "before"} readOnly={field === "before" && !!batch} value={row[field] || ""} onChange={(event) => update(index, field, event.target.value)} /></td>)}
+        {(["before", "after"] as const).map((field) => <td key={field}><FormattedNumberInput aria-label={`${index + 1} ${field}`} min="0.0001" max={field === "after" && row.before ? Number(row.before) : undefined} required={field === "before"} readOnly={!editable || (field === "before" && !!batch && !manager)} value={row[field] || ""} onValueChange={(value) => update(index, field, value)} /></td>)}
         <td><input aria-label={`${index + 1} Шлак`} type="number" min="0" max={row.before && row.after ? Math.max(0, Number(row.before) - Number(row.after)) : undefined} step="0.0001" value={row.slag} onChange={(event) => update(index, "slag", event.target.value)} /></td>
         <td><input aria-label={`${index + 1} Хорогдол`} type="number" readOnly data-calculated value={lossValue(row)} /></td>
-        {manager && <td><input aria-label={`${index + 1} sample`} type="number" min="0.0001" step="0.0001" value={row.sample || ""} onChange={(event) => update(index, "sample", event.target.value)} /></td>}
-        {!batch && <td className="weight-row-action"><div className="weight-row-actions">{index === rows.length - 1 && <button type="button" className="weight-row-icon-button" aria-label="Гулдмай нэмэх" title="Гулдмай нэмэх" disabled={rows.length >= 100} onClick={() => setRows((current) => [...current, newRow()])}><Plus aria-hidden="true" size={18} /></button>}{index > 0 && <button type="button" className="weight-row-icon-button weight-row-remove-button" aria-label="Гулдмай хасах" title="Гулдмай хасах" onClick={() => setRows((current) => current.filter((_, rowIndex) => rowIndex !== index))}><Minus aria-hidden="true" size={18} /></button>}</div></td>}
+        {manager && <td><FormattedNumberInput aria-label={`${index + 1} sample`} min="0.0001" required value={row.sample || ""} onValueChange={(value) => update(index, "sample", value)} /></td>}
+        {!batch && <td className="weight-row-action"><div className="weight-row-actions">{index === rows.length - 1 && <button type="button" className="weight-row-icon-button" aria-label="Гулдмай нэмэх" title="Гулдмай нэмэх" disabled={rows.length >= 100} onClick={() => { setRows((current) => [...current, newRow()]); setQuantity(String(rows.length + 1)); }}><Plus aria-hidden="true" size={18} /></button>}{index > 0 && <button type="button" className="weight-row-icon-button weight-row-remove-button" aria-label="Гулдмай хасах" title="Гулдмай хасах" onClick={() => { setRows((current) => current.filter((_, rowIndex) => rowIndex !== index)); setQuantity(String(rows.length - 1)); }}><Minus aria-hidden="true" size={18} /></button>}</div></td>}
       </tr>)}</tbody></table></div>
       {!locked && <div className="workspace-toolbar intake-form-actions"><button className="primary-button" type="submit" value="draft" disabled={!batch && !startNumber}>Хадгалах</button>
         {!manager && <button className="secondary-button" type="submit" value="ready_for_sampling" disabled={(!batch && !startNumber) || !meltingComplete}>Эрхлэгчид илгээх</button>}
-        {manager && <button className="secondary-button" type="submit" value="sample_taken" disabled={(!batch && !startNumber) || !meltingComplete || !sampleComplete}>Дээж авах</button>}</div>}
+        {manager && <button className="secondary-button" type="submit" value="sample_taken" disabled={(!batch && !startNumber) || !meltingComplete || !sampleComplete}>Шинжилгээнд илгээх</button>}</div>}
     </fieldset>{error && <p className="login-error" role="alert">{error}</p>}</form>
   </WorkspaceDialog>;
 }

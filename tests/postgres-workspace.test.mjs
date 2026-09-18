@@ -49,7 +49,7 @@ test("PostgreSQL routes enforce tenant scope and persist staff and intake audits
   const originalFetch = globalThis.fetch;
   const sqlErrors = [];
   try {
-    for (const migration of ["0000_even_falcon.sql", "0001_flashy_william_stryker.sql", "0002_happy_glorian.sql", "0003_outgoing_gabe_jones.sql", "0004_request_certificates.sql", "0005_annual_certificate_numbers.sql", "0006_batch_registration_numbers.sql", "0007_oval_domino.sql", "0008_customer_assay_center_ownership.sql", "0009_bullion_examination_approval.sql", "0010_integration_publications.sql", "0011_unique_legal_entity_customer.sql", "0012_certificate_signature_evidence.sql", "0013_widen_certificate_signature_status.sql", "0014_customer_legacy_import_fields.sql", "0015_bullion_examination_return_notes.sql", "0016_daily_chemist_assignments.sql", "0017_multiple_daily_chemist_assignments.sql", "0018_silver_bullion_examination_methods.sql", "0019_silver_bullion_intake_titer.sql"]) {
+    for (const migration of ["0000_even_falcon.sql", "0001_flashy_william_stryker.sql", "0002_happy_glorian.sql", "0003_outgoing_gabe_jones.sql", "0004_request_certificates.sql", "0005_annual_certificate_numbers.sql", "0006_batch_registration_numbers.sql", "0007_oval_domino.sql", "0008_customer_assay_center_ownership.sql", "0009_bullion_examination_approval.sql", "0010_integration_publications.sql", "0011_unique_legal_entity_customer.sql", "0012_certificate_signature_evidence.sql", "0013_widen_certificate_signature_status.sql", "0014_customer_legacy_import_fields.sql", "0015_bullion_examination_return_notes.sql", "0016_daily_chemist_assignments.sql", "0017_multiple_daily_chemist_assignments.sql", "0018_silver_bullion_examination_methods.sql", "0019_silver_bullion_intake_titer.sql", "0020_private_assay_act_fields.sql"]) {
       await database.exec(await readFile(new URL(`../packages/db/drizzle/${migration}`, import.meta.url), "utf8"));
     }
     // Emulate Neon's HTTP wire format against a disposable PostgreSQL engine.
@@ -117,12 +117,13 @@ test("PostgreSQL routes enforce tenant scope and persist staff and intake audits
     assert.equal((await (await request(nextPath, melter)).json()).nextNumber, "0001");
     assert.equal((await request(nextPath, foreign)).status, 404);
     assert.equal((await request(nextPath, chemist)).status, 403);
-    const intake = await request("/api/v1/bullion/intakes", melter, "POST", { customerId: customer.id, metal: "gold", status: "draft", delta: -0.03125, items: [{ bullionNo: "1", grossWeightBeforeGrams: 100 }] });
+    const intake = await request("/api/v1/bullion/intakes", melter, "POST", { customerId: customer.id, metal: "gold", status: "draft", delta: -0.03125, actNumber: "ACT-2026-001", actDate: "2026-09-18", items: [{ bullionNo: "1", grossWeightBeforeGrams: 100 }] });
     assert.equal(intake.status, 201);
     const batch = (await intake.json()).record;
     assert.equal(batch.publicId, "550001");
     assert.equal(batch.initialBullionNumber, "0001");
     assert.equal(batch.items[0].bullionNo, "0001");
+    assert.deepEqual((await database.query("SELECT act_number, act_date::text FROM bullion_intake_batches WHERE id = $1", [batch.id])).rows[0], { act_number: "0001", act_date: "2026-09-18" });
     assert.equal((await (await request(nextPath, le)).json()).nextNumber, "0002");
     const item = batch.items[0];
     const weights = { status: "draft", items: [{ id: item.id, grossWeightAfterGrams: 99.5, slagWeightGrams: 0.25 }] };
@@ -173,8 +174,9 @@ test("PostgreSQL routes enforce tenant scope and persist staff and intake audits
     assert.equal(calculatedSaved.measurementEntries[1].reading.toFixed(2),'1252.89');
     assert.equal(calculatedSaved.measurementEntries[2].reading.toFixed(2),'106.97');
     const report = (await (await request("/api/v1/reports", le)).json()).data;
-    assert.equal(report[0].bullionCount, 1);
-    assert.equal(report[0].receivedGrams, 100);
+    assert.equal(report.length, 1);
+    assert.equal(report[0].grossWeightBeforeGrams, 100);
+    assert.equal(report[0].actNumber, "0001");
     const summaryResponse = await request("/api/v1/reports/summary", le);
     assert.equal(summaryResponse.status, 200);
     const summary = (await summaryResponse.json()).data;

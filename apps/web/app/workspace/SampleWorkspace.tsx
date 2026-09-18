@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { Plus, Minus, ChevronLeft, ChevronRight, CalendarDays, CircleCheck, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { Plus, Minus, ChevronLeft, ChevronRight, CalendarDays, CircleCheck, RefreshCw, X } from "lucide-react";
 import type { AnonymousSample, SubmitBullionExaminationInput } from "../../../../packages/shared/src/bullion-types";
 import { WorkspaceDialog } from "../OperationalWorkspace";
 import { api } from "./api";
@@ -11,6 +12,7 @@ import { WorkspaceLoadingSkeleton } from "./WorkspaceLoadingSkeleton";
 import { ChemistPicker } from "./ChemistPicker";
 
 const statusLabels: Record<string, string> = { pending: "Хүлээгдэж байна", draft: "Шинжилгээнд", submitted: "Эрхлэгчийн хяналтад", approved: "Баталсан", esign_approved: "eSign баталсан", rejected: "Буцаасан", superseded: "Өмнөх хувилбар" };
+const managerBatchStatusPriority: Record<string, number> = { pending: 0, draft: 0, submitted: 1, approved: 2, esign_approved: 3, rejected: 4, superseded: 5 };
 type ManagerBatch = {
   id: string;
   customerName: string;
@@ -125,9 +127,9 @@ export function SampleWorkspace({ manager = false, centerType }: { manager?: boo
   const [selectedBatch, setSelectedBatch] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
-  const [status, setStatus] = useState("all");
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
+  const [activeColumnFilter, setActiveColumnFilter] = useState<string | null>(null);
   const [historyDate, setHistoryDate] = useState(todayInMongolia);
   const [historyMode, setHistoryMode] = useState(false);
   const [historySamples, setHistorySamples] = useState<AnonymousSample[]>([]);
@@ -191,11 +193,26 @@ export function SampleWorkspace({ manager = false, centerType }: { manager?: boo
       completedAt: batchSamples.map((sample) => sample.completedAt).filter(Boolean).sort().at(-1) ?? null,
     };
   });
+  const batchRowValues = (batch: ManagerBatch) => ({
+    customer: batch.customerName,
+    registrationNo: batch.registrationNo,
+    receivedAt: workflowDate(batch.receivedAt, false),
+    metal: batch.metal === "gold" ? "Алт" : "Мөнгө",
+    bullion: String(batch.samples.length),
+    chemistProgress: batch.samples.map((sample) => `${sample.assignedChemistName ?? ""} ${sample.status === "submitted" || sample.status === "approved" ? "1/1" : "0/1"}`).join(" "),
+  });
   const filteredBatches = managerBatches.filter((batch) => {
-    const needle = query.trim().toLowerCase();
-    return (!needle || batch.customerName.toLowerCase().includes(needle) || batch.registrationNo.toLowerCase().includes(needle) || batch.samples.some((sample) => examinationNumber(sample.analysisNo).includes(needle)))
-      && (status === "all" || status === batch.status);
-  }).sort((left, right) => Date.parse(right.completedAt ?? right.assignedAt ?? right.receivedAt) - Date.parse(left.completedAt ?? left.assignedAt ?? left.receivedAt));
+    const fields = batchRowValues(batch);
+    return Object.entries(columnFilters).every(([column, value]) => !value.trim() || fields[column as keyof typeof fields].toLocaleLowerCase().includes(value.trim().toLocaleLowerCase()));
+  }).sort((left, right) => {
+    const statusDifference = (managerBatchStatusPriority[left.status] ?? 99) - (managerBatchStatusPriority[right.status] ?? 99);
+    return statusDifference || Date.parse(right.completedAt ?? right.assignedAt ?? right.receivedAt) - Date.parse(left.completedAt ?? left.assignedAt ?? left.receivedAt);
+  });
+  function HeaderFilter({ column, text, label = text }: { column: string; text: string; label?: ReactNode }) {
+    const isActive = activeColumnFilter === column;
+    if (isActive) return <input className="report-column-filter-input sample-column-filter-input" aria-label={`${text} хайх`} autoFocus value={columnFilters[column] ?? ""} placeholder={text} onBlur={() => setActiveColumnFilter(null)} onChange={(event) => { setColumnFilters((current) => ({ ...current, [column]: event.target.value })); setPage(1); }} onKeyDown={(event) => { if (event.key === "Escape") { setColumnFilters((current) => ({ ...current, [column]: "" })); setActiveColumnFilter(null); } }} />;
+    return <button className={`report-column-filter${columnFilters[column] ? " is-filtered" : ""}`} type="button" title={`${text} хайх`} onClick={() => setActiveColumnFilter(column)}>{label}</button>;
+  }
   const activeBatch = selectedBatch ? managerBatches.find((batch) => batch.id === selectedBatch) ?? null : null;
   const pageCount = Math.max(1, Math.ceil(filteredBatches.length / 25));
   const currentPage = Math.min(page, pageCount);
@@ -231,9 +248,10 @@ export function SampleWorkspace({ manager = false, centerType }: { manager?: boo
       {!loading && !historyLoading && !selected && !error && <p>Шинжилгээ сонгоно уу.</p>}
     </div>
   </section>;
-  return <section className="workspace-section"><div className="workspace-toolbar"><input aria-label="Дээж хайх" placeholder="Харилцагч, бүртгэл эсвэл шинжилгээний дугаараар хайх" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} />{manager && <select aria-label="Төлөв" value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }}><option value="all">Бүх төлөв</option>{Object.entries(statusLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>}<button className="secondary-button" disabled={loading} onClick={() => { void refresh(); }} type="button">{loading ? "Шинэчилж байна..." : "Шинэчлэх"}</button></div>
+  const headerActions = typeof document === "undefined" ? null : document.getElementById("intake-header-actions");
+  return <><section className="workspace-section">{headerActions && createPortal(<button className="secondary-button sample-list-refresh" disabled={loading} onClick={() => { void refresh(); }} type="button" aria-label="Шинэчлэх" title="Шинэчлэх"><RefreshCw size={20} className={loading ? "is-spinning" : undefined} aria-hidden="true" /></button>, headerActions)}
     {error && <p className="login-error" role="alert">{error}</p>}
-{loading ? <WorkspaceLoadingSkeleton /> : <div className="workspace-table-scroll sample-list-scroll"><table className="workspace-table sample-list-table"><thead><tr><th>№</th><th>Харилцагч</th><th>Бүртгэл №</th><th>Огноо</th><th>Металл</th><th>Гулдмай</th><th>Химичдийн явц</th><th>Төлөв</th></tr></thead><tbody>{pageBatches.map((batch, index) => <tr key={batch.id} className="manager-sample-row" tabIndex={0} onClick={() => setSelectedBatch(batch.id)} onKeyDown={(event) => {
+{loading ? <WorkspaceLoadingSkeleton /> : <div className="workspace-table-scroll sample-list-scroll"><table className="workspace-table sample-list-table"><thead><tr><th>№</th><th><HeaderFilter column="customer" text="Харилцагч" /></th><th><HeaderFilter column="registrationNo" text="Бүртгэл №" /></th><th><HeaderFilter column="receivedAt" text="Огноо" /></th><th><HeaderFilter column="metal" text="Металл" /></th><th><HeaderFilter column="bullion" text="Гулдмай" /></th><th><HeaderFilter column="chemistProgress" text="Химичдийн явц" /></th><th>Төлөв</th></tr></thead><tbody>{pageBatches.map((batch, index) => <tr key={batch.id} className="manager-sample-row" tabIndex={0} onClick={() => setSelectedBatch(batch.id)} onKeyDown={(event) => {
   if (event.key !== "Enter" && event.key !== " ") return;
   event.preventDefault(); setSelectedBatch(batch.id);
 }}>
@@ -246,7 +264,7 @@ export function SampleWorkspace({ manager = false, centerType }: { manager?: boo
       <button type="button" className="secondary-button" aria-label="Дараах хуудас" title="Дараах хуудас" disabled={currentPage === pageCount} onClick={() => setPage(currentPage + 1)}><ChevronRight size={20} aria-hidden="true" /></button>
     </nav>}
     {activeBatch && <BatchReviewDialog key={activeBatch.id} batch={activeBatch} centerType={centerType} onClose={() => setSelectedBatch(null)} onSaved={() => { setSelectedBatch(null); void refresh(); }} />}
-  </section>;
+  </section></>;
 }
 
 function ChemistHistoryDatePicker({ value, availableDates, onChange }: { value: string; availableDates: string[]; onChange(value: string): void }) {
@@ -296,8 +314,8 @@ function ChemistHistoryDatePicker({ value, availableDates, onChange }: { value: 
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const style = status === "approved" || status === "esign_approved" ? "active" : status === "submitted" ? "warning" : "neutral";
-  return <span className={`status-badge status-${style}`}>{statusLabels[status] ?? status}</span>;
+  const workflowStatus = status === "submitted" ? "awaiting-review" : status === "draft" ? "assigned" : status === "pending" ? "awaiting-assignment" : status;
+  return <span className={`intake-workflow-status sample-workflow-status is-${workflowStatus}`}>{statusLabels[status] ?? status}</span>;
 }
 
 function BatchChemistAssignment({ samples, onSaved }: { samples: AnonymousSample[]; onSaved(): Promise<void> }) {

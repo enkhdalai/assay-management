@@ -1,13 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { Building2, ChartNoAxesCombined, FlaskConical, KeyRound, LayoutDashboard, LogOut, Settings, UsersRound, UserRoundCog, Inbox } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Building2, ChartNoAxesCombined, FileSpreadsheet, FileText, FlaskConical, KeyRound, LayoutDashboard, LogOut, Minus, Settings, UsersRound, UserRoundCog, Inbox } from "lucide-react";
+import * as XLSX from "xlsx";
 import type { AuthenticatedUser } from "../../../packages/security/src/session";
 import type { CustomerRecord, ManagedUser } from "../../../packages/shared/src";
 import { canManageStaff, isCenterManager, workspaceRoleLabels } from "../../../packages/shared/src/workspace-access";
 import { CreateCustomerDialog, CustomersView } from "./CustomerComponents";
 import { InviteUserForm } from "./users/invite/InviteUserForm";
 import { DailyChemistScheduleDialog, IntakeWorkspace } from "./workspace/IntakeWorkspace";
+import { CalendarDateInput } from "./workspace/CalendarDateInput";
 import { SampleWorkspace } from "./workspace/SampleWorkspace";
 import { OrganizationsWorkspace } from "./workspace/OrganizationsWorkspace";
 import { IntegrationSettingsWorkspace } from "./workspace/IntegrationSettingsWorkspace";
@@ -17,7 +19,9 @@ import { api } from "./workspace/api";
 import "./workspace/workspace.css";
 
 type View = "dashboard" | "intake" | "samples" | "customers" | "staff" | "reports" | "organizations" | "settings";
-const labels: Record<View, string> = { dashboard: "Нүүр", intake: "Гулдмай хүлээн авах", samples: "Дээж", customers: "Харилцагчид", staff: "Ажилтнууд", reports: "Тайлан", organizations: "Байгууллагууд", settings: "Тохиргоо" };
+type MetalPrices = { rateDate: string; gold: MetalPrice; silver: MetalPrice };
+type MetalPrice = { buy: number; sell: number; change: { absolute: number; percent: number } | null };
+const labels: Record<View, string> = { dashboard: "Нүүр", intake: "Гулдмай хүлээн авах", samples: "Химичдийн шинжилгээ", customers: "Харилцагчид", staff: "Ажилтнууд", reports: "Тайлан", organizations: "Байгууллагууд", settings: "Тохиргоо" };
 const viewIcons: Record<View, typeof LayoutDashboard> = {
   dashboard: LayoutDashboard,
   intake: Inbox,
@@ -38,6 +42,17 @@ function formatSessionCountdown(expiresAt: number, now: number): string {
   return hours > 0 ? `${hours}:${minuteSecond}` : minuteSecond;
 }
 
+function formatMetalPrice(value: number): string {
+  return new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
+}
+
+function SidebarMetalPriceRow({ label, price }: { label: string; price: MetalPrice }) {
+  const change = price.change;
+  const ChangeIcon = !change || change.absolute === 0 ? Minus : change.absolute > 0 ? ArrowUpRight : ArrowDownRight;
+  const direction = !change || change.absolute === 0 ? "steady" : change.absolute > 0 ? "up" : "down";
+  return <div className="sidebar-metal-price-row"><strong>{label}</strong><i aria-hidden="true">|</i><div className="sidebar-metal-price-details"><b>{formatMetalPrice(price.buy)}</b></div>{change && <small className={`sidebar-metal-price-change ${direction}`}><ChangeIcon size={12} aria-hidden="true" />{change.absolute > 0 ? "+" : ""}{formatMetalPrice(change.absolute)} ({change.percent > 0 ? "+" : ""}{change.percent.toFixed(2)}%)</small>}</div>;
+}
+
 export function OperationalWorkspace() {
   const [user, setUser] = useState<AuthenticatedUser | null>(null);
   const [error, setError] = useState("");
@@ -53,6 +68,9 @@ export function OperationalWorkspace() {
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
   const [dashboardCreatingCustomer, setDashboardCreatingCustomer] = useState(false);
   const [dashboardDailyChemistScheduleOpen, setDashboardDailyChemistScheduleOpen] = useState(false);
+  const [metalPrices, setMetalPrices] = useState<MetalPrices | null>(null);
+  const [metalPricesUnavailable, setMetalPricesUnavailable] = useState(false);
+  const [metalPricesLoading, setMetalPricesLoading] = useState(true);
   const extensionRequested = useRef(false);
   const accountMenu = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -67,6 +85,21 @@ export function OperationalWorkspace() {
     }).catch((error) => { if (active) setError(error.message); });
     return () => { active = false; };
   }, []);
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    const refreshPrices = () => {
+      api<{ data: MetalPrices }>("/api/metal-prices").then(({ data }) => {
+        if (!active) return;
+        setMetalPrices(data);
+        setMetalPricesUnavailable(false);
+        setMetalPricesLoading(false);
+      }).catch(() => { if (active) { setMetalPricesUnavailable(true); setMetalPricesLoading(false); } });
+    };
+    refreshPrices();
+    const interval = window.setInterval(refreshPrices, 5 * 60_000);
+    return () => { active = false; window.clearInterval(interval); };
+  }, [user]);
   const logout = useCallback(async () => {
     setLoggingOut(true);
     try { await api("/api/auth/logout", { method: "POST" }); window.location.assign("/login"); }
@@ -146,11 +179,11 @@ export function OperationalWorkspace() {
   return <div className={`workspace-shell ${manager ? "with-navigation" : ""}`}>
     {manager && <aside className="workspace-nav"><a className="workspace-brand" href="/"><img src="/favicon.svg" alt="" width="42" height="42" /><span>Сорьцын төв</span></a>
       <nav aria-label="Үндсэн цэс">{views.map((item) => { const Icon = viewIcons[item]; return <button type="button" key={item} aria-current={view === item ? "page" : undefined} onClick={() => { setView(item); setError(""); }}><Icon aria-hidden="true" size={18} strokeWidth={1.9} /><span>{labels[item]}</span></button>; })}</nav>
-      <p className="workspace-nav-footer">Сорьцын төвийн удирдлага</p>
+      <div className="workspace-nav-meta">{metalPrices ? <div className="sidebar-metal-prices" aria-label={`Монголбанкны ${metalPrices.rateDate} өдрийн үнэт металлын ханш`}><p>Монголбанкны өнөөдрийн ханш</p><SidebarMetalPriceRow label="АЛТ" price={metalPrices.gold} /><SidebarMetalPriceRow label="МӨНГӨ" price={metalPrices.silver} /></div> : metalPricesUnavailable ? <div className="sidebar-metal-prices sidebar-metal-prices-unavailable" role="status"><p>Монголбанкны өнөөдрийн ханш</p><small>Монголбанкны API ажиллахгүй байна.</small></div> : metalPricesLoading ? <div className="sidebar-metal-prices sidebar-metal-prices-loading" role="status" aria-label="Монголбанкны ханш ачаалж байна."><i /><div><i /><i /></div><div><i /><i /></div></div> : null}<p className="workspace-nav-footer">Сорьцын төвийн удирдлага</p></div>
     </aside>}
     <main className="workspace-main">
       <header className="workspace-header"><div>{!manager && <img src="/favicon.svg" alt="" width="36" height="36" />}<h1>{user && allowed ? user.role === "chemist" ? "Алт, мөнгөн гулдмайн шинжилгээ" : labels[view] : "Сорьцын төвийн удирдлага"}</h1></div>
-        {user && <div className="workspace-account">{(view === "intake" || (manager && view === "dashboard")) && <div id="intake-header-actions" className="workspace-header-actions">{manager && view === "dashboard" && <><button type="button" className="secondary-button" onClick={() => setDashboardCreatingCustomer(true)}>Харилцагч нэмэх</button><button type="button" className="secondary-button" onClick={() => setDashboardDailyChemistScheduleOpen(true)}><UsersRound size={18} aria-hidden="true" />Өнөөдрийн химич</button></>}</div>}{sessionExpiresAt && <span className="session-timer" aria-label={`Сесс дуусах хүртэл ${formatSessionCountdown(sessionExpiresAt, sessionNow)}`}>Холболт салгах: <strong>{formatSessionCountdown(sessionExpiresAt, sessionNow)}</strong></span>}<div className="workspace-account-menu" ref={accountMenu}><button className="workspace-avatar" type="button" onClick={() => setAccountMenuOpen((open) => !open)} aria-label="Хэрэглэгчийн цэс" aria-expanded={accountMenuOpen} aria-haspopup="menu">{user.fullName.trim().charAt(0).toLocaleUpperCase()}</button>{accountMenuOpen && <div className="workspace-account-dropdown" role="menu"><div className="workspace-account-summary"><strong>{user.fullName}</strong><span>{workspaceRoleLabels[user.role] ?? user.role}</span></div><button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); setChangePasswordOpen(true); }}><KeyRound aria-hidden="true" size={17} />Нууц үг солих</button><button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); setAccountSettingsOpen(true); }}><Settings aria-hidden="true" size={17} />Бүртгэлийн тохиргоо</button><button type="button" role="menuitem" className="account-menu-logout" onClick={logout} disabled={loggingOut}><LogOut aria-hidden="true" size={17} />Гарах</button></div>}</div></div>}
+        {user && <div className="workspace-account">{(view === "intake" || view === "samples" || (manager && view === "dashboard")) && <div id="intake-header-actions" className="workspace-header-actions">{manager && view === "dashboard" && <><button type="button" className="secondary-button" onClick={() => setDashboardCreatingCustomer(true)}>Харилцагч нэмэх</button><button type="button" className="secondary-button" onClick={() => setDashboardDailyChemistScheduleOpen(true)}><UsersRound size={18} aria-hidden="true" />Химичийн тохиргоо</button></>}</div>}{sessionExpiresAt && <span className="session-timer" aria-label={`Сесс дуусах хүртэл ${formatSessionCountdown(sessionExpiresAt, sessionNow)}`}>Холболт салгах: <strong>{formatSessionCountdown(sessionExpiresAt, sessionNow)}</strong></span>}<div className="workspace-account-menu" ref={accountMenu}><button className="workspace-avatar" type="button" onClick={() => setAccountMenuOpen((open) => !open)} aria-label="Хэрэглэгчийн цэс" aria-expanded={accountMenuOpen} aria-haspopup="menu">{user.fullName.trim().charAt(0).toLocaleUpperCase()}</button>{accountMenuOpen && <div className="workspace-account-dropdown" role="menu"><div className="workspace-account-summary"><strong>{user.fullName}</strong><span>{workspaceRoleLabels[user.role] ?? user.role}</span></div><button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); setChangePasswordOpen(true); }}><KeyRound aria-hidden="true" size={17} />Нууц үг солих</button><button type="button" role="menuitem" onClick={() => { setAccountMenuOpen(false); setAccountSettingsOpen(true); }}><Settings aria-hidden="true" size={17} />Бүртгэлийн тохиргоо</button><button type="button" role="menuitem" className="account-menu-logout" onClick={logout} disabled={loggingOut}><LogOut aria-hidden="true" size={17} />Гарах</button></div>}</div></div>}
       </header>
       <div className="workspace-content-frame">
         {error && <p role="alert" className="login-error">{error}</p>}
@@ -164,7 +197,7 @@ export function OperationalWorkspace() {
         {manager && view === "staff" && <StaffWorkspace user={user} />}
         {user.role === "system_admin" && view === "organizations" && <OrganizationsWorkspace />}
         {user.role === "system_admin" && view === "settings" && <IntegrationSettingsWorkspace />}
-        {manager && view === "reports" && <ReportsWorkspace organizationName={user.role === "system_admin" ? "Бүх төв" : user.organizationName} />}
+        {manager && view === "reports" && <ReportsWorkspace />}
         </>}
       </div>
     </main>
@@ -338,11 +371,20 @@ function StaffWorkspace({ user }: { user: AuthenticatedUser }) {
   </section>;
 }
 
-type ReportRow = { metal: string; bullionCount: number; sampleCount: number; receivedGrams: number; afterGrams: number; submittedCount: number };
-function ReportsWorkspace({ organizationName }: { organizationName: string }) {
+type ReportRow = {
+  organizationName: string; customerRegistrationNumber: string | null; receivedAt: string; registrationNo: string; bullionNo: string; analysisNo: string; metal: "gold" | "silver";
+  grossWeightBeforeGrams: number; grossWeightAfterGrams: number | null; sampleWeightMilligrams: number | null; lossGrams: number | null;
+  receivedWeightGrams: number | null; remainingMilligrams: number | null; korolkoMilligrams: number | null;
+  goldFinenessPermille: number | null; silverFinenessPermille: number | null; delta: number | null; origin: string | null;
+  chemistName: string | null; actNumber: string | null; actDate: string | null;
+};
+function ReportsWorkspace() {
+  const reportScrollRef = useRef<HTMLDivElement>(null);
   const [from, setFrom] = useState(new Date().toISOString().slice(0, 8) + "01");
   const [to, setTo] = useState(new Date().toISOString().slice(0, 10));
   const [rows, setRows] = useState<ReportRow[]>([]);
+  const [filters, setFilters] = useState<Record<string, string>>({});
+  const [activeFilter, setActiveFilter] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -352,12 +394,55 @@ function ReportsWorkspace({ organizationName }: { organizationName: string }) {
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [from, to]);
-  return <section className="workspace-section report-sheet"><h2>{organizationName}</h2><div className="workspace-toolbar no-print">
-    <label>Эхлэх огноо<input type="date" value={from} max={to} onChange={(event) => { setLoading(true); setError(""); setFrom(event.target.value); }} /></label>
-    <label>Дуусах огноо<input type="date" value={to} min={from} onChange={(event) => { setLoading(true); setError(""); setTo(event.target.value); }} /></label>
-    <button className="secondary-button" type="button" disabled={loading || !!error} onClick={() => window.print()}>Хэвлэх / PDF</button>
-  </div><p>{from} - {to}</p>{error && <p className="login-error" role="alert">{error}</p>}
-    {loading ? <WorkspaceLoadingSkeleton rows={3} /> : !error && <div className="workspace-table-scroll"><table className="workspace-table"><thead><tr><th>Металл</th><th>Гулдмай</th><th>Дээж</th><th>Хүлээн авсан /гр/</th><th>Хайлалтын дараах /гр/</th><th>Хяналтад илгээсэн</th></tr></thead><tbody>{rows.map((row) => <tr key={row.metal}><td>{row.metal === "gold" ? "Алт" : "Мөнгө"}</td><td>{row.bullionCount}</td><td>{row.sampleCount}</td><td>{row.receivedGrams.toLocaleString()}</td><td>{row.afterGrams.toLocaleString()}</td><td>{row.submittedCount}</td></tr>)}</tbody></table>{rows.length === 0 && <p>Энэ хугацаанд бүртгэл байхгүй байна.</p>}</div>}
+  const value = (input: number | null | undefined) => input == null ? "-" : new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 }).format(input);
+  const fineness = (input: number | null | undefined) => input == null ? "-" : input.toFixed(2);
+  const date = (input: string) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ulaanbaatar" }).format(new Date(input));
+  const rowValues = (row: ReportRow, index: number) => ({
+    index: String(index + 1), organization: row.organizationName, customerRegistrationNumber: row.customerRegistrationNumber || "-", receivedAt: date(row.receivedAt), registrationNo: row.registrationNo,
+    bullionNo: row.bullionNo, melting: `${value(row.grossWeightBeforeGrams)} ${value(row.grossWeightAfterGrams)}`,
+    before: value(row.grossWeightBeforeGrams), after: value(row.grossWeightAfterGrams), sampleWeight: value(row.sampleWeightMilligrams),
+    receivedWeight: value(row.receivedWeightGrams), remaining: value(row.remainingMilligrams), korolko: value(row.korolkoMilligrams),
+    loss: value(row.lossGrams), goldFineness: row.metal === "gold" ? fineness(row.goldFinenessPermille) : "-",
+    silverFineness: row.metal === "silver" ? value(row.silverFinenessPermille) : "-", delta: row.metal === "gold" ? value(row.delta) : "-",
+    origin: row.origin || "-", chemist: row.chemistName || "-", actNumber: row.actNumber || "-", actDate: row.actDate || "-",
+  });
+  const visibleRows = rows.map((row, index) => ({ row, index })).filter(({ row, index }) => Object.entries(filters).every(([column, filter]) => {
+    const query = filter.trim().toLocaleLowerCase();
+    return !query || rowValues(row, index)[column as keyof ReturnType<typeof rowValues>].toLocaleLowerCase().includes(query);
+  }));
+  function HeaderFilter({ column, label, text }: { column: string; label: React.ReactNode; text: string }) {
+    const isActive = activeFilter === column;
+    if (isActive) return <input className="report-column-filter-input no-print" aria-label={`${text} хайх`} autoFocus value={filters[column] ?? ""} placeholder={text} onBlur={() => setActiveFilter(null)} onChange={(event) => setFilters((current) => ({ ...current, [column]: event.target.value }))} onKeyDown={(event) => { if (event.key === "Escape") { setFilters((current) => ({ ...current, [column]: "" })); setActiveFilter(null); } }} />;
+    return <button className={`report-column-filter${filters[column] ? " is-filtered" : ""}`} type="button" title={`${text} хайх`} onClick={() => setActiveFilter(column)}>{label}</button>;
+  }
+  function forwardHorizontalScroll(event: React.WheelEvent<HTMLElement>) {
+    const tableScroll = reportScrollRef.current;
+    if (!tableScroll || tableScroll.contains(event.target as Node)) return;
+    const horizontalDelta = event.deltaX || (event.shiftKey ? event.deltaY : 0);
+    if (!horizontalDelta) return;
+    tableScroll.scrollLeft += horizontalDelta;
+    event.preventDefault();
+  }
+  function exportSpreadsheet() {
+    const headers = ["Д/д", "Байгууллага", "Регистрийн №", "Огноо", "№", "Гулдмайн №", "Хайлалтын жин /гр/ - Өмнөх", "Хайлалтын жин /гр/ - Дараах", "Дээжийн жин /мг/", "Авсан жин", "Дээжийн үлдэгдэл", "Королько", "Хорогдол /гр/", "Алтны сорьц", "Мөнгөний сорьц", "Делта", "Гарал, үүсэл", "Химич", "Актын №", "Актны огноо"];
+    const worksheet = XLSX.utils.aoa_to_sheet([headers, ...visibleRows.map(({ row, index }) => {
+      const fields = rowValues(row, index);
+      return [fields.index, row.organizationName, fields.customerRegistrationNumber, fields.receivedAt, row.registrationNo, row.bullionNo, fields.before, fields.after, fields.sampleWeight, fields.receivedWeight, fields.remaining, fields.korolko, fields.loss, fields.goldFineness, fields.silverFineness, fields.delta, fields.origin, fields.chemist, fields.actNumber, fields.actDate];
+    })]);
+    worksheet["!cols"] = [{ wch: 6 }, { wch: 28 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 15 }, { wch: 15 }, { wch: 16 }, { wch: 13 }, { wch: 18 }, { wch: 12 }, { wch: 15 }, { wch: 13 }, { wch: 14 }, { wch: 12 }, { wch: 20 }, { wch: 18 }, { wch: 12 }, { wch: 14 }];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Хувийн сорьцын тайлан");
+    XLSX.writeFile(workbook, `huviin-sortsiin-tailan_${from}_${to}.xlsx`, { compression: true });
+  }
+  return <section className="workspace-section report-sheet" onWheel={forwardHorizontalScroll}><header className="report-print-masthead">
+    <img className="report-print-accreditation" src="/mnas-logo.jpg" alt="MNAS Accreditation System" />
+    <div className="report-print-contact"><strong>ҮНЭТ МЕТАЛЛЫН СОРЬЦЫН ТӨВ ХХК</strong><span>Хаяг: Улаанбаатар хот, ХУД, 3-р хороо</span><span>Email: assaylabmon@gmail.com</span></div>
+    <img className="report-print-logo" src="/private_comp_logo.webp" alt="ҮМСТ" />
+  </header><div className="workspace-toolbar no-print">
+    <label>Эхлэх огноо<CalendarDateInput name="report-from" value={from} max={to} onChange={(value) => { setLoading(true); setError(""); setFrom(value); }} /></label>
+    <label>Дуусах огноо<CalendarDateInput name="report-to" value={to} min={from} onChange={(value) => { setLoading(true); setError(""); setTo(value); }} /></label>
+  </div><div className="report-table-heading"><p>{from} - {to}</p><div className="report-export-actions no-print"><button className="secondary-button report-export-button report-export-excel" type="button" title="Excel файл татах" aria-label="Excel файл татах" disabled={loading || !!error} onClick={exportSpreadsheet}><FileSpreadsheet size={22} aria-hidden="true" /></button><button className="secondary-button report-export-button report-export-pdf" type="button" title="PDF хадгалах" aria-label="PDF хадгалах" disabled={loading || !!error} onClick={() => { setActiveFilter(null); window.requestAnimationFrame(() => window.print()); }}><FileText size={22} aria-hidden="true" /></button></div></div>{error && <p className="login-error" role="alert">{error}</p>}
+    {loading ? <WorkspaceLoadingSkeleton rows={3} /> : !error && <div ref={reportScrollRef} className="workspace-table-scroll private-assay-report-scroll"><table className="workspace-table private-assay-report"><thead><tr><th rowSpan={2}><HeaderFilter column="index" text="Д/д" label="Д/д" /></th><th rowSpan={2}><HeaderFilter column="organization" text="Байгууллага" label="Байгууллага" /></th><th rowSpan={2}><HeaderFilter column="customerRegistrationNumber" text="Регистрийн №" label="Регистрийн №" /></th><th rowSpan={2}><HeaderFilter column="receivedAt" text="Огноо" label="Огноо" /></th><th rowSpan={2}><HeaderFilter column="registrationNo" text="№" label="№" /></th><th rowSpan={2}><HeaderFilter column="bullionNo" text="Гулдмайн №" label="Гулдмайн №" /></th><th colSpan={2}><HeaderFilter column="melting" text="Хайлалтын жин /гр/" label="Хайлалтын жин /гр/" /></th><th rowSpan={2}><HeaderFilter column="sampleWeight" text="Дээжийн жин /мг/" label={<>Дээжийн<br />жин /мг/</>} /></th><th rowSpan={2}><HeaderFilter column="receivedWeight" text="Авсан жин" label="Авсан жин" /></th><th rowSpan={2}><HeaderFilter column="remaining" text="Дээжийн үлдэгдэл" label={<>Дээжийн<br />үлдэгдэл</>} /></th><th rowSpan={2}><HeaderFilter column="korolko" text="Королько" label="Королько" /></th><th rowSpan={2}><HeaderFilter column="loss" text="Хорогдол /гр/" label={<>Хорогдол<br />/гр/</>} /></th><th rowSpan={2}><HeaderFilter column="goldFineness" text="Алтны сорьц" label={<>Алтны<br />сорьц</>} /></th><th rowSpan={2}><HeaderFilter column="silverFineness" text="Мөнгөний сорьц" label={<>Мөнгөний<br />сорьц</>} /></th><th rowSpan={2}><HeaderFilter column="delta" text="Делта" label="Делта" /></th><th rowSpan={2}><HeaderFilter column="origin" text="Гарал, үүсэл" label={<>Гарал,<br />үүсэл</>} /></th><th rowSpan={2}><HeaderFilter column="chemist" text="Химич" label="Химич" /></th><th rowSpan={2}><HeaderFilter column="actNumber" text="Актын №" label="Актын №" /></th><th rowSpan={2}><HeaderFilter column="actDate" text="Актны огноо" label="Актны огноо" /></th></tr><tr><th><HeaderFilter column="before" text="Өмнөх" label="Өмнөх" /></th><th><HeaderFilter column="after" text="Дараах" label="Дараах" /></th></tr></thead><tbody>{visibleRows.map(({ row, index }) => { const fields = rowValues(row, index); return <tr key={`${row.registrationNo}-${row.bullionNo}`}><td>{fields.index}</td><td>{row.organizationName}</td><td>{fields.customerRegistrationNumber}</td><td>{fields.receivedAt}</td><td>{row.registrationNo}</td><td>{row.bullionNo}</td><td>{fields.before}</td><td>{fields.after}</td><td>{fields.sampleWeight}</td><td>{fields.receivedWeight}</td><td>{fields.remaining}</td><td>{fields.korolko}</td><td>{fields.loss}</td><td>{fields.goldFineness}</td><td>{fields.silverFineness}</td><td>{fields.delta}</td><td>{fields.origin}</td><td>{fields.chemist}</td><td>{fields.actNumber}</td><td>{fields.actDate}</td></tr>; })}</tbody></table>{visibleRows.length === 0 && <p>Тохирох бүртгэл олдсонгүй.</p>}</div>}
   </section>;
 }
 
