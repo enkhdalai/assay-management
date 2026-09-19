@@ -42,3 +42,5 @@ cloudflare.production.env
 /.wrangler/
 /outputs/
 /work/
+
+tsconfig.tsbuildinfo
