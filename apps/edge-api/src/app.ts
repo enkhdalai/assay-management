@@ -81,6 +81,7 @@ edgeApi.use("/v1/*", async (c, next) => {
       || (path === "/api/v1/customers" && method === "POST")
       || (path === "/api/v1/bullion/intakes" && ["GET", "POST"].includes(method))
       || (path === "/api/v1/bullion/jewelry-catalogue" && method === "GET")
+      || (path === "/api/v1/bullion/jewelry-price-rules" && method === "GET")
       || (path === "/api/v1/bullion/jewelry-intakes" && method === "GET")
       || (path === "/api/v1/bullion/jewelry-intakes" && method === "POST")
       || (path === "/api/v1/bullion/intakes/next-number" && method === "GET")
@@ -124,12 +125,17 @@ edgeApi.onError((error, c) => {
   // financial and personal data. The request ID is safe to share for support.
   const requestId = c.req.header("x-request-id")?.trim() || crypto.randomUUID();
   const category = classifyOperationalError(error);
+  const cause = error instanceof Error ? error.cause : undefined;
+  const causeRecord = cause && typeof cause === "object" ? cause as Record<string, unknown> : null;
   console.error("Assay API request failed", {
     requestId,
     name: error instanceof Error ? error.name : "UnknownError",
     // This stays in the server log. Neon error details are essential for
     // diagnosing operational SQL failures, but must not be returned to clients.
     message: error instanceof Error ? error.message : String(error),
+    causeMessage: cause instanceof Error ? cause.message : cause ? String(cause) : undefined,
+    causeCode: typeof causeRecord?.code === "string" ? causeRecord.code : undefined,
+    causeDetail: typeof causeRecord?.detail === "string" ? causeRecord.detail : undefined,
     category,
   });
   const response = c.json(

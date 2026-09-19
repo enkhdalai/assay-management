@@ -33,10 +33,16 @@ export function CustomerCombobox({ customers, value, onChange, inputId: supplied
   const normalized = query.trim().toLowerCase();
   const options = customers.filter((customer) => !normalized || `${customer.displayName} ${customer.registrationNumber ?? ""}`.toLowerCase().includes(normalized));
   function select(customer: IntakeCustomerOption) { onChange(customer); setQuery(customer.displayName); setOpen(false); }
+  function updateQuery(nextQuery: string) {
+    setQuery(nextQuery); setOpen(true);
+    const exactMatches = customers.filter((customer) => customer.displayName.trim().toLocaleLowerCase() === nextQuery.trim().toLocaleLowerCase());
+    if (exactMatches.length === 1) onChange(exactMatches[0]);
+    else if (selected && nextQuery !== selected.displayName) onChange(null);
+  }
   return <div className="customer-combobox" ref={root}>
     <input id={inputId} role="combobox" aria-autocomplete="list" aria-expanded={open} aria-controls={`${inputId}-listbox`}
       placeholder="Нэр, регистрээр хайх" value={open ? query : selectedName || query} onFocus={() => { setQuery(selectedName || query); setOpen(true); }}
-      onChange={(event) => { setQuery(event.target.value); setOpen(true); if (selected && event.target.value !== selected.displayName) onChange(null); }}
+      onChange={(event) => updateQuery(event.target.value)}
       onKeyDown={(event) => { if (event.key === "Escape") setOpen(false); if (event.key === "Enter" && options.length === 1) { event.preventDefault(); select(options[0]); } }} required />
     {open && <div id={`${inputId}-listbox`} className="customer-combobox-options" role="listbox" aria-label="Харилцагч сонгох">
       {options.slice(0, 100).map((customer) => <button type="button" role="option" aria-selected={customer.id === value} key={customer.id} onMouseDown={(event) => event.preventDefault()} onClick={() => select(customer)}>

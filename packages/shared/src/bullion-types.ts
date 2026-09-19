@@ -52,7 +52,9 @@ export type CreateJewelryIntakeInput = {
   qualityKind: "delta" | "titer";
   qualityValue: number;
   weightBand: string;
+  totalWeightGrams: number;
   pieceCount: number;
+  markingService: "none" | "hallmark" | "laser" | "both";
 };
 
 export type JewelryIntakeRecord = CreateJewelryIntakeInput & {
@@ -61,6 +63,17 @@ export type JewelryIntakeRecord = CreateJewelryIntakeInput & {
   customerName?: string;
   receivedByName: string;
   createdAt: string;
+  calculatedServicePriceMnt: number;
+};
+
+export type JewelryServicePriceRule = {
+  id: string;
+  serviceCode: "gold_jewelry_analysis" | "silver_jewelry_analysis" | "gold_hallmark" | "silver_hallmark" | "gold_laser" | "silver_laser";
+  metal: "gold" | "silver";
+  minWeightGrams: number | null;
+  maxWeightGrams: number | null;
+  priceMnt: number;
+  effectiveFrom: string;
 };
 
 export type BullionIntakeItemRecord = BullionIntakeItemInput & {
@@ -74,6 +87,7 @@ export type BullionIntakeItemRecord = BullionIntakeItemInput & {
 export type BullionIntakeBatchRecord = Omit<CreateBullionIntakeInput, "items"> & {
   id: string;
   publicId: string;
+  splitFromBatchId?: string | null;
   customerName: string;
   receivedByName: string;
   wasEdited?: boolean;

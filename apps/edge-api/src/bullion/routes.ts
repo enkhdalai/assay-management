@@ -7,6 +7,7 @@ import type {
   CreateBullionIntakeInput,
   CreateJewelryIntakeInput,
   JewelryIntakeRecord,
+  JewelryServicePriceRule,
   SubmitBullionExaminationInput,
 } from "../../../../packages/shared/src";
 import { sha256Base64Url, type AuthenticatedUser } from "../../../../packages/security/src";
@@ -873,6 +874,24 @@ bullionRoutes.get("/jewelry-catalogue", async (c) => {
   return c.json({ ok: true, data: rows });
 });
 
+bullionRoutes.get("/jewelry-price-rules", async (c) => {
+  const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
+  if (!user) return c.json({ ok: false, message: "Нэвтрэх шаардлагатай." }, 401);
+  if (!INTAKE_ROLES.has(user.role)) return c.json({ ok: false, message: "Үнийн хүснэгт харах эрхгүй байна." }, 403);
+  if (!c.env.DATABASE_URL) return c.json({ ok: true, data: [] });
+  const rows = readRows(await createDatabase(c.env.DATABASE_URL).execute<JewelryServicePriceRule>(sql`
+    SELECT id, service_code AS "serviceCode", metal_scope AS metal,
+      min_weight_grams::float AS "minWeightGrams", max_weight_grams::float AS "maxWeightGrams",
+      price_mnt::float AS "priceMnt", effective_from::text AS "effectiveFrom"
+    FROM service_price_rules
+    WHERE active = true AND effective_from <= CURRENT_DATE
+      AND (effective_to IS NULL OR effective_to >= CURRENT_DATE)
+      AND service_code IN ('gold_jewelry_analysis', 'silver_jewelry_analysis', 'gold_hallmark', 'silver_hallmark', 'gold_laser', 'silver_laser')
+    ORDER BY metal_scope, min_weight_grams NULLS FIRST
+  `));
+  return c.json({ ok: true, data: rows });
+});
+
 bullionRoutes.get("/jewelry-intakes", async (c) => {
   const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
   if (!user) return c.json({ ok: false, message: "Нэвтрэх шаардлагатай." }, 401);
@@ -882,7 +901,9 @@ bullionRoutes.get("/jewelry-intakes", async (c) => {
     SELECT j.id, j.assay_center_id AS "assayCenterId", j.customer_id AS "customerId", c.display_name AS "customerName",
       j.received_at AS "receivedAt", j.item_name AS "itemName", j.metal, j.spoon_type AS "spoonType",
       j.quality_kind AS "qualityKind", j.quality_value::float AS "qualityValue", j.weight_band AS "weightBand",
-      j.piece_count AS "pieceCount", u.full_name AS "receivedByName", j.created_at AS "createdAt"
+      j.total_weight_grams::float AS "totalWeightGrams", j.piece_count AS "pieceCount",
+      j.marking_service AS "markingService",
+      j.calculated_service_price_mnt::float AS "calculatedServicePriceMnt", u.full_name AS "receivedByName", j.created_at AS "createdAt"
     FROM jewelry_intake_records j
     JOIN customers c ON c.id = j.customer_id
     JOIN users u ON u.id = j.received_by_user_id
@@ -902,12 +923,36 @@ bullionRoutes.post("/jewelry-intakes", async (c) => {
 
   if (!c.env.DATABASE_URL) {
     if (!localCustomerForCenter(input.customerId, user)) return c.json({ ok: false }, 404);
-    const record: JewelryIntakeRecord = { ...input, id: crypto.randomUUID(), assayCenterId: user.organizationId, receivedByName: user.fullName, createdAt: new Date().toISOString() };
+    const record: JewelryIntakeRecord = { ...input, id: crypto.randomUUID(), assayCenterId: user.organizationId, receivedByName: user.fullName, createdAt: new Date().toISOString(), calculatedServicePriceMnt: fallbackJewelryServicePrice(input.metal, input.totalWeightGrams, input.pieceCount, input.markingService) };
     inMemoryJewelryIntakes.push(record);
     return c.json({ ok: true, record }, 201);
   }
 
   const db = createDatabase(c.env.DATABASE_URL);
+  const serviceCode = input.metal === "gold" ? "gold_jewelry_analysis" : "silver_jewelry_analysis";
+  const priceRow = readRows(await db.execute<{ priceMnt: number }>(sql`
+    SELECT price_mnt::float AS "priceMnt" FROM service_price_rules
+    WHERE active = true AND service_code = ${serviceCode} AND metal_scope = ${input.metal}
+      AND effective_from <= ${input.receivedAt}::date
+      AND (effective_to IS NULL OR effective_to >= ${input.receivedAt}::date)
+      AND (min_weight_grams IS NULL OR min_weight_grams <= ${input.totalWeightGrams})
+      AND (max_weight_grams IS NULL OR max_weight_grams >= ${input.totalWeightGrams})
+    ORDER BY effective_from DESC, min_weight_grams DESC NULLS LAST LIMIT 1
+  `))[0];
+  if (!priceRow) return c.json({ ok: false, message: "Энэ эдлэлийн үйлчилгээний үнэ тохируулагдаагүй байна." }, 422);
+  const markingCodes = input.markingService === "both" ? [`${input.metal}_hallmark`, `${input.metal}_laser`] : input.markingService === "none" ? [] : [`${input.metal}_${input.markingService}`];
+  const markingRows: Array<{ priceMnt: number } | undefined> = [];
+  for (const code of markingCodes) {
+    markingRows.push(readRows(await db.execute<{ priceMnt: number }>(sql`
+      SELECT price_mnt::float AS "priceMnt" FROM service_price_rules
+      WHERE active = true AND metal_scope = ${input.metal} AND service_code = ${code}
+        AND effective_from <= ${input.receivedAt}::date
+        AND (effective_to IS NULL OR effective_to >= ${input.receivedAt}::date)
+      ORDER BY effective_from DESC LIMIT 1
+    `))[0]);
+  }
+  if (markingRows.length !== markingCodes.length || markingRows.some((row) => !row)) return c.json({ ok: false, message: "Сонгосон баталгааны тэмдгийн үнэ тохируулагдаагүй байна." }, 422);
+  const calculatedServicePriceMnt = priceRow.priceMnt + markingRows.reduce((total, row) => total + (row?.priceMnt ?? 0), 0) * input.pieceCount;
   const id = crypto.randomUUID();
   const auditId = crypto.randomUUID();
   const now = new Date().toISOString();
@@ -922,22 +967,29 @@ bullionRoutes.post("/jewelry-intakes", async (c) => {
     ), inserted AS (
       INSERT INTO jewelry_intake_records (
         id, assay_center_id, customer_id, received_by_user_id, received_at, item_name, metal, spoon_type,
-        quality_kind, quality_value, weight_band, piece_count
+        quality_kind, quality_value, weight_band, total_weight_grams, piece_count, marking_service, calculated_service_price_mnt
       ) SELECT ${id}::uuid, ${user.organizationId}::uuid, customer.id, ${user.id}::uuid,
         ${input.receivedAt}::timestamptz, ${input.itemName}, ${input.metal}::metal_type, ${input.spoonType},
-        ${input.qualityKind}, ${input.qualityValue}, ${input.weightBand}, ${input.pieceCount}
+        ${input.qualityKind}, ${input.qualityValue}, ${input.weightBand}, ${input.totalWeightGrams}, ${input.pieceCount}, ${input.markingService}, ${calculatedServicePriceMnt}
       FROM customer CROSS JOIN catalogue RETURNING id
     ), audited AS (
       INSERT INTO audit_logs (id, actor_user_id, actor_organization_id, action, entity_type, entity_id, new_values, reason, entry_hash)
       SELECT ${auditId}::uuid, ${user.id}::uuid, ${user.organizationId}::uuid,
         'jewelry_intake.created', 'jewelry_intake_records', inserted.id,
-        jsonb_build_object('itemName', ${input.itemName}, 'metal', ${input.metal}, 'pieceCount', ${input.pieceCount}),
+        jsonb_build_object(
+          'itemName', ${input.itemName}::text,
+          'metal', ${input.metal}::text,
+          'pieceCount', ${input.pieceCount}::integer,
+          'markingService', ${input.markingService}::text,
+          'totalWeightGrams', ${input.totalWeightGrams}::numeric,
+          'calculatedServicePriceMnt', ${calculatedServicePriceMnt}::numeric
+        ),
         'Jewelry intake registered', ${entryHash} FROM inserted
     )
     SELECT id FROM inserted
   `);
   if (!readRows(result)[0]) return c.json({ ok: false, message: "Сонгосон харилцагч олдсонгүй." }, 404);
-  const record: JewelryIntakeRecord = { ...input, id, assayCenterId: user.organizationId, receivedByName: user.fullName, createdAt: now };
+  const record: JewelryIntakeRecord = { ...input, id, assayCenterId: user.organizationId, receivedByName: user.fullName, createdAt: now, calculatedServicePriceMnt };
   return c.json({ ok: true, record }, 201);
 });
 
@@ -1032,6 +1084,131 @@ bullionRoutes.patch("/intakes/:id", async (c) => {
   const result = readRows(results[1]);
   if (!result.length) return c.json({ ok: false, message: "Бүртгэл өөрчлөгдсөн эсвэл жин буруу байна. Дараах жин өмнөх жингээс их, Шлак жингийн зөрүүнээс их байж болохгүй." }, 409);
   return c.json({ ok: true });
+});
+
+bullionRoutes.post("/intakes/:id/split", async (c) => {
+  const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
+  if (!user) return c.json({ ok: false }, 401);
+  if (!isCenterManager(user.role)) return c.json({ ok: false }, 403);
+  const id = c.req.param("id");
+  const body = object(await c.req.json().catch(() => null));
+  const itemIds = Array.isArray(body.itemIds) ? body.itemIds.map(text) : [];
+  if (!isUuid(id) || !itemIds.length || itemIds.length > 99 || new Set(itemIds).size !== itemIds.length || itemIds.some((itemId) => !isUuid(itemId))) {
+    return c.json({ ok: false, message: "Тусгаарлах гулдмайг зөв сонгоно уу." }, 400);
+  }
+
+  if (!c.env.DATABASE_URL) {
+    const source = visibleBatches(user).find((batch) => batch.id === id && batch.metal === "gold");
+    const selected = source?.items.filter((item) => itemIds.includes(item.id)) ?? [];
+    if (!source || selected.length !== itemIds.length || selected.length === source.items.length) {
+      return c.json({ ok: false, message: "Тусгаарлах боломжтой гулдмай олдсонгүй." }, 409);
+    }
+    const firstBullion = memoryNextNumber(user);
+    const registration = memoryNextRegistrationNumber(user);
+    const now = new Date().toISOString();
+    const split: BullionIntakeBatchRecord = {
+      ...source,
+      id: crypto.randomUUID(), publicId: formatBullionNumber(registration.prefix, registration.value),
+      splitFromBatchId: source.id, receivedByName: user.fullName, actNumber: memoryNextActNumber(user), actDate: localDate(),
+      initialBullionNumber: formatBullionNumber(firstBullion.prefix, firstBullion.value), pieceCount: selected.length, createdAt: now,
+      items: selected.map((item, index) => ({ ...item, sequenceNo: index + 1, bullionNo: formatBullionNumber(firstBullion.prefix, firstBullion.value + index) })),
+    };
+    source.items = source.items.filter((item) => !itemIds.includes(item.id));
+    source.pieceCount = source.items.length;
+    source.wasEdited = true;
+    inMemoryBatches.unshift(split);
+    batchOwners.set(split.id, user.organizationId);
+    return c.json({ ok: true, data: { id: split.id, publicId: split.publicId, actNumber: split.actNumber, initialBullionNumber: split.initialBullionNumber } }, 201);
+  }
+
+  const db = createDatabase(c.env.DATABASE_URL);
+  const splitId = crypto.randomUUID();
+  const parentAuditId = crypto.randomUUID();
+  const childAuditId = crypto.randomUUID();
+  const parentHash = await sha256Base64Url(JSON.stringify({ parentAuditId, sourceId: id, itemIds, actor: user.id, action: "bullion_intake.split" }));
+  const childHash = await sha256Base64Url(JSON.stringify({ childAuditId, splitId, sourceId: id, itemIds, actor: user.id, action: "bullion_intake.split_created" }));
+  const results = await db.batch([
+    db.execute(sql`SELECT pg_advisory_xact_lock(741206825)`),
+    db.execute<{ id: string; publicId: string; actNumber: string; initialBullionNumber: string }>(sql`
+      WITH requested AS MATERIALIZED (
+        SELECT id::uuid FROM jsonb_array_elements_text(${JSON.stringify(itemIds)}::jsonb) AS requested(id)
+      ), target AS MATERIALIZED (
+        SELECT b.* FROM bullion_intake_batches b
+        WHERE b.id = ${id}::uuid AND b.metal = 'gold'
+          AND (${user.role} = 'system_admin' OR b.assay_center_id = ${user.organizationId}::uuid)
+          AND NOT EXISTS (SELECT 1 FROM bullion_certificates certificate WHERE certificate.batch_id = b.id)
+          AND (SELECT count(*) FROM bullion_intake_items item WHERE item.batch_id = b.id) > ${itemIds.length}
+          AND (SELECT count(*) FROM bullion_intake_items item JOIN requested requested ON requested.id = item.id WHERE item.batch_id = b.id) = ${itemIds.length}
+        FOR UPDATE
+      ), selected AS MATERIALIZED (
+        SELECT item.* FROM bullion_intake_items item
+        JOIN requested requested ON requested.id = item.id
+        JOIN target target ON target.id = item.batch_id
+      ), sequence AS MATERIALIZED (
+        SELECT target.*, customer.display_name AS "customerName",
+          COALESCE(center.metadata->>'bullionPrefix', CASE WHEN center.type = 'private_assay_center' THEN '55' ELSE '' END) AS "registrationPrefix",
+          COALESCE((SELECT max(CASE WHEN item.bullion_no ~ '^[0-9]{1,12}$' THEN item.bullion_no::bigint END)
+            FROM bullion_intake_items item JOIN bullion_intake_batches batch ON batch.id = item.batch_id
+            WHERE batch.assay_center_id = target.assay_center_id), 0) + 1 AS "nextBullion",
+          COALESCE((SELECT max(CASE WHEN batch.public_id ~ ('^' || COALESCE(center.metadata->>'bullionPrefix', CASE WHEN center.type = 'private_assay_center' THEN '55' ELSE '' END) || '[0-9]{4,12}$')
+            THEN substring(batch.public_id FROM length(COALESCE(center.metadata->>'bullionPrefix', CASE WHEN center.type = 'private_assay_center' THEN '55' ELSE '' END)) + 1)::bigint END)
+            FROM bullion_intake_batches batch WHERE batch.assay_center_id = target.assay_center_id), 0) + 1 AS "nextRegistration",
+          COALESCE((SELECT max(CASE WHEN batch.act_number ~ '^[0-9]{1,12}$' THEN batch.act_number::bigint END)
+            FROM bullion_intake_batches batch WHERE batch.assay_center_id = target.assay_center_id), 0) + 1 AS "nextAct"
+        FROM target
+        JOIN customers customer ON customer.id = target.customer_id
+        JOIN organizations center ON center.id = target.assay_center_id
+      ), created AS (
+        INSERT INTO bullion_intake_batches (
+          id, public_id, assay_center_id, customer_id, received_by_user_id, metal, received_at,
+          branch_name, province, district, dispatch_reference, split_from_batch_id, act_number, act_date,
+          initial_bullion_number, piece_count, delta, silver_titer, status
+        ) SELECT ${splitId}::uuid,
+          sequence."registrationPrefix" || lpad(sequence."nextRegistration"::text, GREATEST(4, length(sequence."nextRegistration"::text)), '0'),
+          sequence.assay_center_id, sequence.customer_id, ${user.id}::uuid, sequence.metal, sequence.received_at,
+          sequence.branch_name, sequence.province, sequence.district, sequence.dispatch_reference, sequence.id,
+          lpad(sequence."nextAct"::text, GREATEST(4, length(sequence."nextAct"::text)), '0'),
+          (now() AT TIME ZONE 'Asia/Ulaanbaatar')::date,
+          lpad(sequence."nextBullion"::text, GREATEST(4, length(sequence."nextBullion"::text)), '0'),
+          (SELECT count(*) FROM selected), sequence.delta, sequence.silver_titer, sequence.status
+        FROM sequence RETURNING id, public_id AS "publicId", act_number AS "actNumber", initial_bullion_number AS "initialBullionNumber"
+      ), moved AS (
+        UPDATE bullion_intake_items item
+        SET batch_id = created.id,
+          sequence_no = numbered."sequenceNo",
+          bullion_no = lpad((sequence."nextBullion" + numbered."sequenceNo" - 1)::text,
+            GREATEST(4, length((sequence."nextBullion" + numbered."sequenceNo" - 1)::text)), '0')
+        FROM created
+        CROSS JOIN sequence
+        CROSS JOIN (SELECT id, row_number() OVER (ORDER BY sequence_no)::int AS "sequenceNo" FROM selected) numbered
+        WHERE item.id = numbered.id
+        RETURNING item.id, item.examination_number, item.bullion_no
+      ), updated_parent AS (
+        UPDATE bullion_intake_batches batch
+        SET piece_count = piece_count - (SELECT count(*) FROM moved), updated_at = now()
+        WHERE batch.id IN (SELECT id FROM target) AND (SELECT count(*) FROM moved) = ${itemIds.length}
+        RETURNING batch.id
+      ), parent_audit AS (
+        INSERT INTO audit_logs (id, actor_user_id, actor_organization_id, action, entity_type, entity_id, new_values, reason, entry_hash)
+        SELECT ${parentAuditId}::uuid, ${user.id}::uuid, ${user.organizationId}::uuid,
+          'bullion_intake.split', 'bullion_intake_batches', updated_parent.id,
+          jsonb_build_object('splitBatchId', created.id, 'movedItemIds', ${JSON.stringify(itemIds)}::jsonb, 'retainedPieceCount', (SELECT count(*) FROM bullion_intake_items WHERE batch_id = updated_parent.id)),
+          'Delayed bullion moved to a separate intake batch', ${parentHash}
+        FROM updated_parent CROSS JOIN created
+      ), child_audit AS (
+        INSERT INTO audit_logs (id, actor_user_id, actor_organization_id, action, entity_type, entity_id, new_values, reason, entry_hash)
+        SELECT ${childAuditId}::uuid, ${user.id}::uuid, ${user.organizationId}::uuid,
+          'bullion_intake.split_created', 'bullion_intake_batches', created.id,
+          jsonb_build_object('splitFromBatchId', ${id}::uuid, 'retainedExaminationNumbers', (SELECT jsonb_agg(examination_number) FROM moved)),
+          'Follow-up intake created for delayed examination', ${childHash}
+        FROM created
+      )
+      SELECT id, "publicId", "actNumber", "initialBullionNumber" FROM created
+    `),
+  ]);
+  const record = readRows(results[1])[0];
+  if (!record) return c.json({ ok: false, message: "Энэ бүртгэлийг тусгаарлах боломжгүй байна. Гэрчилгээ үүссэн эсвэл өгөгдөл өөрчлөгдсөн байж болно." }, 409);
+  return c.json({ ok: true, data: record }, 201);
 });
 
 bullionRoutes.post("/intakes/:id/assign", async (c) => {
@@ -1192,9 +1369,9 @@ async function listIntakesFromDatabase(db: AppDatabase, user: AuthenticatedUser)
   const organizationFilter = user.role === "system_admin" ? sql`` : sql`WHERE b.assay_center_id = ${user.organizationId}`;
   const result = await db.execute<IntakeRow>(sql`
     SELECT b.id, b.public_id AS "publicId", b.metal, b.received_at AS "receivedAt", b.branch_name AS "branchName",
-      b.province, b.district, b.dispatch_reference AS "dispatchReference", b.act_number AS "actNumber", b.act_date::text AS "actDate", b.initial_bullion_number AS "initialBullionNumber",
+      b.province, b.district, b.dispatch_reference AS "dispatchReference", b.split_from_batch_id AS "splitFromBatchId", b.act_number AS "actNumber", b.act_date::text AS "actDate", b.initial_bullion_number AS "initialBullionNumber",
       b.piece_count AS "pieceCount", b.delta::float AS delta, b.silver_titer::float AS "silverTiter", b.status, b.created_at AS "createdAt",
-      EXISTS (SELECT 1 FROM audit_logs audit WHERE audit.action = 'bullion_intake.updated' AND audit.entity_type = 'bullion_intake_batches' AND audit.entity_id = b.id) AS "wasEdited",
+      EXISTS (SELECT 1 FROM audit_logs audit WHERE audit.action IN ('bullion_intake.updated', 'bullion_intake.split') AND audit.entity_type = 'bullion_intake_batches' AND audit.entity_id = b.id) AS "wasEdited",
       c.id AS "customerId", c.display_name AS "customerName", u.full_name AS "receivedByName",
       COALESCE(json_agg(json_build_object('id', i.id, 'sequenceNo', i.sequence_no, 'analysisNo', i.examination_number::text,
         'bullionNo', i.bullion_no, 'grossWeightBeforeGrams', i.gross_weight_before_grams::float,
@@ -1369,16 +1546,26 @@ function normalizeJewelryIntake(value: unknown): CreateJewelryIntakeInput {
     spoonType: text(body.spoonType) === "Халбагатай" ? "Халбагатай" : "Халбагагүй",
     qualityKind: text(body.qualityKind) === "titer" ? "titer" : "delta",
     qualityValue: typeof body.qualityValue === "number" ? body.qualityValue : Number.NaN,
-    weightBand: text(body.weightBand), pieceCount: typeof body.pieceCount === "number" ? body.pieceCount : Number.NaN,
+    weightBand: text(body.weightBand), totalWeightGrams: typeof body.totalWeightGrams === "number" ? body.totalWeightGrams : Number.NaN,
+    pieceCount: typeof body.pieceCount === "number" ? body.pieceCount : Number.NaN,
+    markingService: ["hallmark", "laser", "both"].includes(text(body.markingService)) ? text(body.markingService) as "hallmark" | "laser" | "both" : "none",
   };
 }
 
 function validateJewelryIntake(input: CreateJewelryIntakeInput): string | null {
   const weightBands = new Set(["0-10 гр", "10-50 гр", "50-100 гр", "100-500 гр", "500-1000 гр", "1000 гр дээш"]);
   if (!isUuid(input.customerId) || !input.receivedAt || input.itemName.length > 255 || !weightBands.has(input.weightBand)
-    || !Number.isFinite(input.qualityValue) || !Number.isInteger(input.pieceCount) || input.pieceCount < 1 || input.pieceCount > 10000
+    || !Number.isFinite(input.qualityValue) || !Number.isFinite(input.totalWeightGrams) || input.totalWeightGrams <= 0 || input.totalWeightGrams > 1000000
+    || !Number.isInteger(input.pieceCount) || input.pieceCount < 1 || input.pieceCount > 10000
     || (input.metal === "gold" && input.qualityKind !== "delta") || (input.metal === "silver" && input.qualityKind !== "titer")) return "Эдлэлийн бүртгэлийн мэдээллийг зөв оруулна уу.";
   return null;
+}
+
+function fallbackJewelryServicePrice(metal: "gold" | "silver", totalWeightGrams: number, pieceCount: number, markingService: CreateJewelryIntakeInput["markingService"]) {
+  const analysisPrice = metal === "silver" ? 25000 : totalWeightGrams <= 500 ? 50000 : totalWeightGrams <= 2000 ? 100000 : totalWeightGrams <= 4000 ? 150000 : totalWeightGrams <= 6000 ? 175000 : 250000;
+  const hallmark = markingService === "hallmark" || markingService === "both" ? (metal === "gold" ? 2000 : 1000) * pieceCount : 0;
+  const laser = markingService === "laser" || markingService === "both" ? (metal === "gold" ? 4000 : 2000) * pieceCount : 0;
+  return analysisPrice + hallmark + laser;
 }
 
 function normalizeExamination(value: unknown): SubmitBullionExaminationInput {

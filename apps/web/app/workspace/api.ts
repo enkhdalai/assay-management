@@ -5,6 +5,9 @@ export async function api<T = { ok: boolean }>(url: string, init: RequestInit = 
     throw new Error("Нэвтрэх шаардлагатай.");
   }
   const body = await response.json().catch(() => null);
-  if (!response.ok || !body?.ok) throw new Error(body?.message || "Хүсэлтийг гүйцэтгэх боломжгүй байна.");
+  if (!response.ok || !body?.ok) {
+    const requestId = typeof body?.requestId === "string" ? ` (ID: ${body.requestId})` : "";
+    throw new Error(`${body?.message || "Хүсэлтийг гүйцэтгэх боломжгүй байна."}${requestId}`);
+  }
   return body as T;
 }

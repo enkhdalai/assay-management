@@ -33,6 +33,7 @@ export type {
   CreateBullionIntakeInput,
   CreateJewelryIntakeInput,
   JewelryIntakeRecord,
+  JewelryServicePriceRule,
   SubmitBullionExaminationInput,
 } from "./bullion-types";
 export type {

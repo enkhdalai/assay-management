@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   boolean,
   check,
   date,
@@ -373,6 +374,7 @@ export const bullionIntakeBatches = pgTable(
     province: varchar("province", { length: 120 }),
     district: varchar("district", { length: 120 }),
     dispatchReference: varchar("dispatch_reference", { length: 120 }),
+    splitFromBatchId: uuid("split_from_batch_id").references((): AnyPgColumn => bullionIntakeBatches.id, { onDelete: "restrict" }),
     actNumber: varchar("act_number", { length: 80 }),
     actDate: date("act_date"),
     initialBullionNumber: varchar("initial_bullion_number", { length: 80 }),
@@ -386,6 +388,7 @@ export const bullionIntakeBatches = pgTable(
   (table) => [
     uniqueIndex("bullion_intake_batches_center_public_id_uidx").on(table.assayCenterId, table.publicId),
     index("bullion_intake_batches_customer_received_idx").on(table.customerId, table.receivedAt),
+    index("bullion_intake_batches_split_from_idx").on(table.splitFromBatchId),
     check("bullion_intake_batches_piece_count_positive", sql`${table.pieceCount} > 0`),
   ],
 );
@@ -402,6 +405,26 @@ export const jewelryItemCatalogue = pgTable(
   (table) => [uniqueIndex("jewelry_item_catalogue_item_name_uidx").on(table.itemName)],
 );
 
+export const servicePriceRules = pgTable(
+  "service_price_rules",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    serviceCode: varchar("service_code", { length: 64 }).notNull(),
+    metalScope: varchar("metal_scope", { length: 32 }).notNull(),
+    minWeightGrams: numeric("min_weight_grams", { precision: 14, scale: 3 }),
+    maxWeightGrams: numeric("max_weight_grams", { precision: 14, scale: 3 }),
+    priceMnt: numeric("price_mnt", { precision: 18, scale: 2 }).notNull(),
+    effectiveFrom: date("effective_from").notNull(),
+    effectiveTo: date("effective_to"),
+    active: boolean("active").default(true).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("service_price_rules_lookup_idx").on(table.serviceCode, table.metalScope, table.effectiveFrom),
+    check("service_price_rules_price_positive", sql`${table.priceMnt} >= 0`),
+  ],
+);
+
 export const jewelryIntakeRecords = pgTable(
   "jewelry_intake_records",
   {
@@ -416,7 +439,10 @@ export const jewelryIntakeRecords = pgTable(
     qualityKind: varchar("quality_kind", { length: 16 }).notNull(),
     qualityValue: numeric("quality_value", { precision: 14, scale: 6 }).notNull(),
     weightBand: varchar("weight_band", { length: 32 }).notNull(),
+    totalWeightGrams: numeric("total_weight_grams", { precision: 14, scale: 3 }).notNull(),
     pieceCount: integer("piece_count").notNull(),
+    markingService: varchar("marking_service", { length: 16 }).default("none").notNull(),
+    calculatedServicePriceMnt: numeric("calculated_service_price_mnt", { precision: 18, scale: 2 }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -424,6 +450,7 @@ export const jewelryIntakeRecords = pgTable(
     index("jewelry_intake_records_center_received_idx").on(table.assayCenterId, table.receivedAt),
     index("jewelry_intake_records_customer_received_idx").on(table.customerId, table.receivedAt),
     check("jewelry_intake_records_piece_count_positive", sql`${table.pieceCount} > 0`),
+    check("jewelry_intake_records_total_weight_positive", sql`${table.totalWeightGrams} > 0`),
   ],
 );
 
