@@ -53,6 +53,14 @@ function SidebarMetalPriceRow({ label, price }: { label: string; price: MetalPri
   return <div className="sidebar-metal-price-row"><strong>{label}</strong><i aria-hidden="true">|</i><div className="sidebar-metal-price-details"><b>{formatMetalPrice(price.buy)}</b></div>{change && <small className={`sidebar-metal-price-change ${direction}`}><ChangeIcon size={12} aria-hidden="true" />{change.absolute > 0 ? "+" : ""}{formatMetalPrice(change.absolute)} ({change.percent > 0 ? "+" : ""}{change.percent.toFixed(2)}%)</small>}</div>;
 }
 
+function WorkspaceNavigationSkeleton() {
+  return <aside className="workspace-nav workspace-nav-skeleton" aria-hidden="true">
+    <div className="workspace-brand"><i /><span /></div>
+    <div className="workspace-nav-skeleton-links">{Array.from({ length: 6 }, (_, index) => <i key={index} />)}</div>
+    <div className="workspace-nav-skeleton-footer"><i /><i /></div>
+  </aside>;
+}
+
 export function OperationalWorkspace() {
   const [user, setUser] = useState<AuthenticatedUser | null>(null);
   const [error, setError] = useState("");
@@ -174,12 +182,13 @@ export function OperationalWorkspace() {
   }, [accountMenuOpen]);
   const manager = user && isCenterManager(user.role);
   const allowed = user && (manager || user.role === "chemist" || user.role === "intake_officer");
+  const workspaceLoading = !user && !error;
   const views: View[] = manager ? ["dashboard", "intake", "samples", "customers", "staff", "reports"] : user?.role === "chemist" ? ["samples"] : ["intake"];
   if (user?.role === "system_admin") views.push("organizations", "settings");
-  return <div className={`workspace-shell ${manager ? "with-navigation" : ""}`}>
-    {manager && <aside className="workspace-nav"><a className="workspace-brand" href="/"><img src="/favicon.svg" alt="" width="42" height="42" /><span>Сорьцын төв</span></a>
+  return <div className={`workspace-shell ${manager || workspaceLoading ? "with-navigation" : ""}`}>
+    {workspaceLoading ? <WorkspaceNavigationSkeleton /> : manager && <aside className="workspace-nav"><a className="workspace-brand" href="/"><img src="/favicon.svg" alt="" width="42" height="42" /><span>Сорьцын төв</span></a>
       <nav aria-label="Үндсэн цэс">{views.map((item) => { const Icon = viewIcons[item]; return <button type="button" key={item} aria-current={view === item ? "page" : undefined} onClick={() => { setView(item); setError(""); }}><Icon aria-hidden="true" size={18} strokeWidth={1.9} /><span>{labels[item]}</span></button>; })}</nav>
-      <div className="workspace-nav-meta">{metalPrices ? <div className="sidebar-metal-prices" aria-label={`Монголбанкны ${metalPrices.rateDate} өдрийн үнэт металлын ханш`}><p>Монголбанкны өнөөдрийн ханш</p><SidebarMetalPriceRow label="АЛТ" price={metalPrices.gold} /><SidebarMetalPriceRow label="МӨНГӨ" price={metalPrices.silver} /></div> : metalPricesUnavailable ? <div className="sidebar-metal-prices sidebar-metal-prices-unavailable" role="status"><p>Монголбанкны өнөөдрийн ханш</p><small>Монголбанкны API ажиллахгүй байна.</small></div> : metalPricesLoading ? <div className="sidebar-metal-prices sidebar-metal-prices-loading" role="status" aria-label="Монголбанкны ханш ачаалж байна."><i /><div><i /><i /></div><div><i /><i /></div></div> : null}<p className="workspace-nav-footer">Сорьцын төвийн удирдлага</p></div>
+      <div className="workspace-nav-meta">{metalPrices ? <div className="sidebar-metal-prices" aria-label={`Монголбанкны ${metalPrices.rateDate} өдрийн үнэт металлын ханш`}><p>Монголбанкны {metalPrices.rateDate} өдрийн ханш</p><SidebarMetalPriceRow label="АЛТ" price={metalPrices.gold} /><SidebarMetalPriceRow label="МӨНГӨ" price={metalPrices.silver} /></div> : metalPricesUnavailable ? <div className="sidebar-metal-prices sidebar-metal-prices-unavailable" role="status"><p>Монголбанкны ханш</p><small>Монголбанкны API ажиллахгүй байна.</small></div> : metalPricesLoading ? <div className="sidebar-metal-prices sidebar-metal-prices-loading" role="status" aria-label="Монголбанкны ханш ачаалж байна."><i /><div><i /><i /></div><div><i /><i /></div></div> : null}<p className="workspace-nav-footer">Сорьцын төвийн удирдлага</p></div>
     </aside>}
     <main className="workspace-main">
       <header className="workspace-header"><div>{!manager && <img src="/favicon.svg" alt="" width="36" height="36" />}<h1>{user && allowed ? user.role === "chemist" ? "Алт, мөнгөн гулдмайн шинжилгээ" : labels[view] : "Сорьцын төвийн удирдлага"}</h1></div>
@@ -431,13 +440,13 @@ function ReportsWorkspace() {
     })]);
     worksheet["!cols"] = [{ wch: 6 }, { wch: 28 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 15 }, { wch: 15 }, { wch: 16 }, { wch: 13 }, { wch: 18 }, { wch: 12 }, { wch: 15 }, { wch: 13 }, { wch: 14 }, { wch: 12 }, { wch: 20 }, { wch: 18 }, { wch: 12 }, { wch: 14 }];
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Хувийн сорьцын тайлан");
-    XLSX.writeFile(workbook, `huviin-sortsiin-tailan_${from}_${to}.xlsx`, { compression: true });
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Сорьцын тайлан");
+    XLSX.writeFile(workbook, `sortsiin-tailan_${from}_${to}.xlsx`, { compression: true });
   }
   return <section className="workspace-section report-sheet" onWheel={forwardHorizontalScroll}><header className="report-print-masthead">
     <img className="report-print-accreditation" src="/mnas-logo.jpg" alt="MNAS Accreditation System" />
-    <div className="report-print-contact"><strong>ҮНЭТ МЕТАЛЛЫН СОРЬЦЫН ТӨВ ХХК</strong><span>Хаяг: Улаанбаатар хот, ХУД, 3-р хороо</span><span>Email: assaylabmon@gmail.com</span></div>
-    <img className="report-print-logo" src="/private_comp_logo.webp" alt="ҮМСТ" />
+    <div className="report-print-contact"><strong>ҮНЭТ МЕТАЛЛЫН СОРЬЦЫН ТАЙЛАН</strong><span>Алт, мөнгөн гулдмайн шинжилгээний нэгдсэн тайлан</span></div>
+    <img className="report-print-logo" src="/favicon.svg" alt="Сорьцын төв" />
   </header><div className="workspace-toolbar no-print">
     <label>Эхлэх огноо<CalendarDateInput name="report-from" value={from} max={to} onChange={(value) => { setLoading(true); setError(""); setFrom(value); }} /></label>
     <label>Дуусах огноо<CalendarDateInput name="report-to" value={to} min={from} onChange={(value) => { setLoading(true); setError(""); setTo(value); }} /></label>

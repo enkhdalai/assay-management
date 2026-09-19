@@ -43,6 +43,26 @@ export type CreateBullionIntakeInput = {
   items: BullionIntakeItemInput[];
 };
 
+export type CreateJewelryIntakeInput = {
+  customerId: string;
+  receivedAt: string;
+  itemName: string;
+  metal: "gold" | "silver";
+  spoonType: "Халбагатай" | "Халбагагүй";
+  qualityKind: "delta" | "titer";
+  qualityValue: number;
+  weightBand: string;
+  pieceCount: number;
+};
+
+export type JewelryIntakeRecord = CreateJewelryIntakeInput & {
+  id: string;
+  assayCenterId: string;
+  customerName?: string;
+  receivedByName: string;
+  createdAt: string;
+};
+
 export type BullionIntakeItemRecord = BullionIntakeItemInput & {
   id: string;
   sequenceNo: number;

@@ -31,6 +31,8 @@ export type {
   BullionMeasurementEntry,
   BullionWeightEntry,
   CreateBullionIntakeInput,
+  CreateJewelryIntakeInput,
+  JewelryIntakeRecord,
   SubmitBullionExaminationInput,
 } from "./bullion-types";
 export type {

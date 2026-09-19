@@ -80,6 +80,9 @@ edgeApi.use("/v1/*", async (c, next) => {
     const allowed = (path === "/api/v1/customers/lookup" && method === "GET")
       || (path === "/api/v1/customers" && method === "POST")
       || (path === "/api/v1/bullion/intakes" && ["GET", "POST"].includes(method))
+      || (path === "/api/v1/bullion/jewelry-catalogue" && method === "GET")
+      || (path === "/api/v1/bullion/jewelry-intakes" && method === "GET")
+      || (path === "/api/v1/bullion/jewelry-intakes" && method === "POST")
       || (path === "/api/v1/bullion/intakes/next-number" && method === "GET")
       || (/^\/api\/v1\/bullion\/intakes\/[0-9a-f-]+$/.test(path) && method === "PATCH");
     if (!allowed) return c.json({ ok: false, message: "Энэ хэсэгт хандах эрхгүй." }, 403);

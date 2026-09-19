@@ -5,6 +5,8 @@ import { createDatabase, type AppDatabase } from "../../../../packages/db/src";
 import type {
   BullionIntakeBatchRecord,
   CreateBullionIntakeInput,
+  CreateJewelryIntakeInput,
+  JewelryIntakeRecord,
   SubmitBullionExaminationInput,
 } from "../../../../packages/shared/src";
 import { sha256Base64Url, type AuthenticatedUser } from "../../../../packages/security/src";
@@ -26,6 +28,7 @@ export const bullionRoutes = new Hono<{ Bindings: EdgeApiEnv }>();
 const INTAKE_ROLES = new Set(["system_admin", "assay_admin", "lab_manager", "intake_officer"]);
 const EXAMINATION_ROLES = new Set(["system_admin", "assay_admin", "chemist", "lab_manager"]);
 const inMemoryBatches: BullionIntakeBatchRecord[] = [];
+const inMemoryJewelryIntakes: JewelryIntakeRecord[] = [];
 let nextMemoryExaminationNumber = 1;
 const batchOwners = new Map<string, string>();
 const memoryExaminations = new Map<string, { revisionNo: number; input: SubmitBullionExaminationInput; submittedAt: string | null; returnedByName?: string | null; returnedAt?: string | null; returnNote?: string | null }>();
@@ -859,6 +862,85 @@ bullionRoutes.post("/intakes", async (c) => {
   return c.json({ ok: true, record }, 201);
 });
 
+bullionRoutes.get("/jewelry-catalogue", async (c) => {
+  const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
+  if (!user) return c.json({ ok: false, message: "Нэвтрэх шаардлагатай." }, 401);
+  if (!INTAKE_ROLES.has(user.role)) return c.json({ ok: false, message: "Эдлэлийн ангилал харах эрхгүй байна." }, 403);
+  if (!c.env.DATABASE_URL) return c.json({ ok: true, data: [] });
+  const rows = readRows(await createDatabase(c.env.DATABASE_URL).execute<{ name: string; metal: "gold" | "silver"; spoonType: "Халбагатай" | "Халбагагүй" }>(sql`
+    SELECT item_name AS name, metal, spoon_type AS "spoonType" FROM jewelry_item_catalogue ORDER BY item_name
+  `));
+  return c.json({ ok: true, data: rows });
+});
+
+bullionRoutes.get("/jewelry-intakes", async (c) => {
+  const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
+  if (!user) return c.json({ ok: false, message: "Нэвтрэх шаардлагатай." }, 401);
+  if (!INTAKE_ROLES.has(user.role)) return c.json({ ok: false, message: "Эдлэлийн бүртгэл харах эрхгүй байна." }, 403);
+  if (!c.env.DATABASE_URL) return c.json({ ok: true, data: inMemoryJewelryIntakes.filter((record) => record.assayCenterId === user.organizationId) });
+  const records = readRows(await createDatabase(c.env.DATABASE_URL).execute<JewelryIntakeRecord>(sql`
+    SELECT j.id, j.assay_center_id AS "assayCenterId", j.customer_id AS "customerId", c.display_name AS "customerName",
+      j.received_at AS "receivedAt", j.item_name AS "itemName", j.metal, j.spoon_type AS "spoonType",
+      j.quality_kind AS "qualityKind", j.quality_value::float AS "qualityValue", j.weight_band AS "weightBand",
+      j.piece_count AS "pieceCount", u.full_name AS "receivedByName", j.created_at AS "createdAt"
+    FROM jewelry_intake_records j
+    JOIN customers c ON c.id = j.customer_id
+    JOIN users u ON u.id = j.received_by_user_id
+    WHERE j.assay_center_id = ${user.organizationId}::uuid
+    ORDER BY j.created_at DESC LIMIT 100
+  `));
+  return c.json({ ok: true, data: records });
+});
+
+bullionRoutes.post("/jewelry-intakes", async (c) => {
+  const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
+  if (!user) return c.json({ ok: false, message: "Нэвтрэх шаардлагатай." }, 401);
+  if (!INTAKE_ROLES.has(user.role)) return c.json({ ok: false, message: "Эдлэл бүртгэх эрхгүй байна." }, 403);
+  const input = normalizeJewelryIntake(await c.req.json().catch(() => null));
+  const validation = validateJewelryIntake(input);
+  if (validation) return c.json({ ok: false, message: validation }, 400);
+
+  if (!c.env.DATABASE_URL) {
+    if (!localCustomerForCenter(input.customerId, user)) return c.json({ ok: false }, 404);
+    const record: JewelryIntakeRecord = { ...input, id: crypto.randomUUID(), assayCenterId: user.organizationId, receivedByName: user.fullName, createdAt: new Date().toISOString() };
+    inMemoryJewelryIntakes.push(record);
+    return c.json({ ok: true, record }, 201);
+  }
+
+  const db = createDatabase(c.env.DATABASE_URL);
+  const id = crypto.randomUUID();
+  const auditId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const entryHash = await sha256Base64Url(JSON.stringify({ auditId, id, actor: user.id, input, now }));
+  const result = await db.execute<{ id: string }>(sql`
+    WITH customer AS (
+      SELECT id FROM customers
+      WHERE id = ${input.customerId}::uuid AND assay_center_id = ${user.organizationId}::uuid
+    ), catalogue AS (
+      SELECT item_name, metal, spoon_type FROM jewelry_item_catalogue
+      WHERE item_name = ${input.itemName} AND metal = ${input.metal}::metal_type AND spoon_type = ${input.spoonType}
+    ), inserted AS (
+      INSERT INTO jewelry_intake_records (
+        id, assay_center_id, customer_id, received_by_user_id, received_at, item_name, metal, spoon_type,
+        quality_kind, quality_value, weight_band, piece_count
+      ) SELECT ${id}::uuid, ${user.organizationId}::uuid, customer.id, ${user.id}::uuid,
+        ${input.receivedAt}::timestamptz, ${input.itemName}, ${input.metal}::metal_type, ${input.spoonType},
+        ${input.qualityKind}, ${input.qualityValue}, ${input.weightBand}, ${input.pieceCount}
+      FROM customer CROSS JOIN catalogue RETURNING id
+    ), audited AS (
+      INSERT INTO audit_logs (id, actor_user_id, actor_organization_id, action, entity_type, entity_id, new_values, reason, entry_hash)
+      SELECT ${auditId}::uuid, ${user.id}::uuid, ${user.organizationId}::uuid,
+        'jewelry_intake.created', 'jewelry_intake_records', inserted.id,
+        jsonb_build_object('itemName', ${input.itemName}, 'metal', ${input.metal}, 'pieceCount', ${input.pieceCount}),
+        'Jewelry intake registered', ${entryHash} FROM inserted
+    )
+    SELECT id FROM inserted
+  `);
+  if (!readRows(result)[0]) return c.json({ ok: false, message: "Сонгосон харилцагч олдсонгүй." }, 404);
+  const record: JewelryIntakeRecord = { ...input, id, assayCenterId: user.organizationId, receivedByName: user.fullName, createdAt: now };
+  return c.json({ ok: true, record }, 201);
+});
+
 bullionRoutes.patch("/intakes/:id", async (c) => {
   const user = await getAuthenticatedUserFromRequest(c.req.raw, c.env);
   if (!user) return c.json({ ok: false }, 401);
@@ -1277,6 +1359,26 @@ function normalizeIntake(value: unknown): CreateBullionIntakeInput {
         grossWeightAfterGrams: after, slagWeightGrams: number(row.slagWeightGrams), sampleWeightMilligrams: number(row.sampleWeightMilligrams) };
     }) : [],
   };
+}
+
+function normalizeJewelryIntake(value: unknown): CreateJewelryIntakeInput {
+  const body = object(value);
+  return {
+    customerId: text(body.customerId), receivedAt: text(body.receivedAt), itemName: text(body.itemName),
+    metal: text(body.metal) === "silver" ? "silver" : "gold",
+    spoonType: text(body.spoonType) === "Халбагатай" ? "Халбагатай" : "Халбагагүй",
+    qualityKind: text(body.qualityKind) === "titer" ? "titer" : "delta",
+    qualityValue: typeof body.qualityValue === "number" ? body.qualityValue : Number.NaN,
+    weightBand: text(body.weightBand), pieceCount: typeof body.pieceCount === "number" ? body.pieceCount : Number.NaN,
+  };
+}
+
+function validateJewelryIntake(input: CreateJewelryIntakeInput): string | null {
+  const weightBands = new Set(["0-10 гр", "10-50 гр", "50-100 гр", "100-500 гр", "500-1000 гр", "1000 гр дээш"]);
+  if (!isUuid(input.customerId) || !input.receivedAt || input.itemName.length > 255 || !weightBands.has(input.weightBand)
+    || !Number.isFinite(input.qualityValue) || !Number.isInteger(input.pieceCount) || input.pieceCount < 1 || input.pieceCount > 10000
+    || (input.metal === "gold" && input.qualityKind !== "delta") || (input.metal === "silver" && input.qualityKind !== "titer")) return "Эдлэлийн бүртгэлийн мэдээллийг зөв оруулна уу.";
+  return null;
 }
 
 function normalizeExamination(value: unknown): SubmitBullionExaminationInput {

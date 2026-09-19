@@ -34,12 +34,12 @@ async function fetchMetalPrices(): Promise<MetalPrices> {
     headers: { accept: "application/json" },
     cf: { cacheTtl: 60, cacheEverything: true },
   });
-  if (!response.ok) throw new Error(`Mongolbank returned ${response.status}`);
-  const body = await response.json() as { success?: boolean; result?: Record<string, unknown> };
-  const result = body.success ? body.result : undefined;
-  const rateDate = requiredText(result?.RATE_DATE);
-  const gold = { buy: requiredNumber(result?.GOLD_BUY), sell: requiredNumber(result?.GOLD_SELL) };
-  const silver = { buy: requiredNumber(result?.SILVER_BUY), sell: requiredNumber(result?.SILVER_SELL) };
+  const body = response.ok ? await response.json().catch(() => null) as { success?: boolean; result?: Record<string, unknown> } | null : null;
+  const current = parseRate(body?.success ? body.result : undefined);
+  const activeRate = current ?? await latestPublishedRate(todayInMongolia());
+  const rateDate = activeRate.rateDate;
+  const gold = activeRate.gold;
+  const silver = activeRate.silver;
   const historyResponse = await fetch(`https://www.mongolbank.mn/api/v1/pm/range?startDate=${daysBefore(rateDate, 14)}&endDate=${rateDate}`, {
     headers: { accept: "application/json" },
     cf: { cacheTtl: 300, cacheEverything: true },
@@ -57,6 +57,36 @@ async function fetchMetalPrices(): Promise<MetalPrices> {
   };
   cachedPrices = { value, expiresAt: Date.now() + 5 * 60_000 };
   return value;
+}
+
+async function latestPublishedRate(endDate: string): Promise<{ rateDate: string; gold: Omit<MetalPrice, "change">; silver: Omit<MetalPrice, "change"> }> {
+  const response = await fetch(`https://www.mongolbank.mn/api/v1/pm/range?startDate=${daysBefore(endDate, 14)}&endDate=${endDate}`, {
+    headers: { accept: "application/json" },
+    cf: { cacheTtl: 300, cacheEverything: true },
+  });
+  const body = response.ok
+    ? await response.json().catch(() => null) as { success?: boolean; result?: Array<Record<string, unknown>> } | null
+    : null;
+  const latest = body?.success ? [...(body.result ?? [])].sort((left, right) => String(right.RATE_DATE).localeCompare(String(left.RATE_DATE))).find(parseRate) : undefined;
+  const parsed = latest && parseRate(latest);
+  if (!parsed) throw new Error("Mongolbank did not return a recent metal price");
+  return parsed;
+}
+
+function parseRate(value: Record<string, unknown> | undefined): { rateDate: string; gold: Omit<MetalPrice, "change">; silver: Omit<MetalPrice, "change"> } | null {
+  try {
+    return {
+      rateDate: requiredText(value?.RATE_DATE),
+      gold: { buy: requiredNumber(value?.GOLD_BUY), sell: requiredNumber(value?.GOLD_SELL) },
+      silver: { buy: requiredNumber(value?.SILVER_BUY), sell: requiredNumber(value?.SILVER_SELL) },
+    };
+  } catch { return null; }
+}
+
+function todayInMongolia(): string {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ulaanbaatar", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+  const part = (type: string) => parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
 function daysBefore(date: string, days: number): string {

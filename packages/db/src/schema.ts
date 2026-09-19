@@ -390,6 +390,43 @@ export const bullionIntakeBatches = pgTable(
   ],
 );
 
+export const jewelryItemCatalogue = pgTable(
+  "jewelry_item_catalogue",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    itemName: varchar("item_name", { length: 255 }).notNull(),
+    metal: metalType("metal").notNull(),
+    spoonType: varchar("spoon_type", { length: 32 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex("jewelry_item_catalogue_item_name_uidx").on(table.itemName)],
+);
+
+export const jewelryIntakeRecords = pgTable(
+  "jewelry_intake_records",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    assayCenterId: uuid("assay_center_id").references(() => organizations.id, { onDelete: "restrict" }).notNull(),
+    customerId: uuid("customer_id").references(() => customers.id, { onDelete: "restrict" }).notNull(),
+    receivedByUserId: uuid("received_by_user_id").references(() => users.id, { onDelete: "restrict" }).notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true }).defaultNow().notNull(),
+    itemName: varchar("item_name", { length: 255 }).notNull(),
+    metal: metalType("metal").notNull(),
+    spoonType: varchar("spoon_type", { length: 32 }).notNull(),
+    qualityKind: varchar("quality_kind", { length: 16 }).notNull(),
+    qualityValue: numeric("quality_value", { precision: 14, scale: 6 }).notNull(),
+    weightBand: varchar("weight_band", { length: 32 }).notNull(),
+    pieceCount: integer("piece_count").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("jewelry_intake_records_center_received_idx").on(table.assayCenterId, table.receivedAt),
+    index("jewelry_intake_records_customer_received_idx").on(table.customerId, table.receivedAt),
+    check("jewelry_intake_records_piece_count_positive", sql`${table.pieceCount} > 0`),
+  ],
+);
+
 export const bullionCertificates = pgTable("bullion_certificates", {
   id: uuid("id").defaultRandom().primaryKey(),
   batchId: uuid("batch_id").references(() => bullionIntakeBatches.id, { onDelete: "restrict" }).notNull(),

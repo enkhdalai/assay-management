@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, type FormEvent, type InputHTMLAttributes, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { BadgeCheck, ClipboardCheck, FlaskConical, LoaderCircle, Minus, PackageCheck, Pencil, PencilLine, Plus, RefreshCw, UsersRound } from "lucide-react";
-import type { AnonymousSample, BullionIntakeBatchRecord, CreateBullionIntakeInput } from "../../../../packages/shared/src";
+import type { AnonymousSample, BullionIntakeBatchRecord, CreateBullionIntakeInput, CreateJewelryIntakeInput, JewelryIntakeRecord } from "../../../../packages/shared/src";
 import { CreateCustomerDialog } from "../CustomerComponents";
 import { WorkspaceDialog } from "../OperationalWorkspace";
 import { api } from "./api";
@@ -16,6 +16,30 @@ type CustomerOption = IntakeCustomerOption;
 type WeightRow = { id?: string; bullionNo: string; before: string; after: string; slag: string; sample: string };
 type DailyChemist = { id: string; fullName: string; status: string; onVacation: boolean };
 type DailyChemistSchedule = { date: string; goldChemistIds: string[]; silverChemistIds: string[]; chemists: DailyChemist[] };
+type JewelryCatalogueItem = { name: string; metal: "gold" | "silver"; spoonType: "Халбагатай" | "Халбагагүй" };
+const fallbackJewelryCatalogue: JewelryCatalogueItem[] = [
+  { name: "Таг/мөнгөн/", metal: "silver", spoonType: "Халбагатай" },
+  { name: "Зүрх /алтан/", metal: "gold", spoonType: "Халбагагүй" },
+  { name: "Хяналтын дээж/999,99/", metal: "gold", spoonType: "Халбагагүй" },
+  { name: "Цагны нүүр/алтан/", metal: "gold", spoonType: "Халбагатай" },
+  { name: "Бүсний тоног/алтан/", metal: "gold", spoonType: "Халбагатай" },
+  { name: "Цөгц/алтан/", metal: "gold", spoonType: "Халбагатай" },
+  { name: "Дөрөө/мөнгөн/", metal: "silver", spoonType: "Халбагатай" },
+  { name: "Ялтсан зоос/алтан/", metal: "gold", spoonType: "Халбагагүй" },
+  { name: "Одон/мөнгөн/", metal: "silver", spoonType: "Халбагатай" },
+  { name: "Сэрээ /алтан/", metal: "gold", spoonType: "Халбагатай" },
+  { name: "Халбага /алтан/", metal: "gold", spoonType: "Халбагатай" },
+  { name: "Тогоо /алтан/ сүвнер", metal: "gold", spoonType: "Халбагатай" },
+  { name: "Тулга /алтан/ сүвнер", metal: "gold", spoonType: "Халбагатай" },
+  { name: "Хуудас /алтан/", metal: "gold", spoonType: "Халбагагүй" },
+  { name: "Өлзий/алтан/", metal: "gold", spoonType: "Халбагагүй" },
+  { name: "Чарм/алтан/", metal: "gold", spoonType: "Халбагагүй" },
+  { name: "Эрх/алтан/", metal: "gold", spoonType: "Халбагагүй" },
+  { name: "Очир/алтан/", metal: "gold", spoonType: "Халбагагүй" },
+  { name: "Шатрын чимэг/алтан/", metal: "gold", spoonType: "Халбагатай" },
+  { name: "Хяналтын дээж/алтан/", metal: "gold", spoonType: "Халбагатай" },
+];
+const jewelryWeightBands = ["0-10 гр", "10-50 гр", "50-100 гр", "100-500 гр", "500-1000 гр", "1000 гр дээш"];
 const newRow = (): WeightRow => ({ bullionNo: "", before: "", after: "", slag: "", sample: "" });
 const optional = (value: string) => value.trim() === "" ? undefined : Number(value);
 const formattedNumber = (value: string) => {
@@ -83,6 +107,9 @@ function centerToday() {
 export function IntakeWorkspace({ manager }: { manager: boolean }) {
   const [batches, setBatches] = useState<BullionIntakeBatchRecord[]>([]);
   const [sampleRecords, setSampleRecords] = useState<AnonymousSample[]>([]);
+  const [jewelryRecords, setJewelryRecords] = useState<JewelryIntakeRecord[]>([]);
+  const [jewelryLoading, setJewelryLoading] = useState(false);
+  const [listMode, setListMode] = useState<"all" | "gold" | "silver" | "jewelry">("all");
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -105,6 +132,16 @@ export function IntakeWorkspace({ manager }: { manager: boolean }) {
       .catch((error) => setError(error.message)).finally(() => setLoading(false));
   }, [manager]);
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    if (listMode !== "jewelry") return;
+    let active = true;
+    setJewelryLoading(true); setError("");
+    void api<{ data: JewelryIntakeRecord[] }>("/api/v1/bullion/jewelry-intakes", { cache: "no-store" })
+      .then((result) => { if (active) setJewelryRecords(result.data); })
+      .catch((error) => { if (active) setError(error.message); })
+      .finally(() => { if (active) setJewelryLoading(false); });
+    return () => { active = false; };
+  }, [listMode]);
   const openTracking = useCallback(async (batchId: string) => {
     setOpeningTrackingId(batchId);
     try {
@@ -146,7 +183,7 @@ export function IntakeWorkspace({ manager }: { manager: boolean }) {
   const filtered = batches.filter((batch) => {
     const fields = intakeRowValues(batch);
     const matchesColumns = Object.entries(columnFilters).every(([column, value]) => !value.trim() || fields[column as keyof typeof fields].toLocaleLowerCase().includes(value.trim().toLocaleLowerCase()));
-    return matchesColumns;
+    return matchesColumns && (listMode === "all" || listMode === "jewelry" || batch.metal === listMode);
   }).sort((left, right) => manager ? workflowPriority[intakeWorkflowStatus(left, sampleRecords)] - workflowPriority[intakeWorkflowStatus(right, sampleRecords)] : 0);
   function HeaderFilter({ column, text, label = text }: { column: string; text: string; label?: ReactNode }) {
     const isActive = activeColumnFilter === column;
@@ -156,18 +193,85 @@ export function IntakeWorkspace({ manager }: { manager: boolean }) {
   const headerActions = typeof document === "undefined" ? null : document.getElementById("intake-header-actions");
   return <section className="workspace-section">
     {headerActions && createPortal(<><button type="button" className="secondary-button" onClick={() => setCreatingCustomer(true)}>Харилцагч нэмэх</button>{manager && <button type="button" className="secondary-button" onClick={() => setDailyChemistScheduleOpen(true)}><UsersRound size={18} aria-hidden="true" />Химичийн тохиргоо</button>}</>, headerActions)}
-    <div className="workspace-toolbar intake-list-toolbar"><div className="intake-list-actions"><button type="button" className="secondary-button intake-refresh-button" aria-label="Шинэчлэх" title="Шинэчлэх" disabled={loading} onClick={refresh}><RefreshCw size={20} className={loading ? "is-spinning" : undefined} aria-hidden="true" /></button>
+    <div className="workspace-toolbar intake-list-toolbar"><div className="intake-list-filters" role="group" aria-label="Бүртгэлийн төрөл шүүх">{([ ["all", "Бүгд"], ["gold", "Алт"], ["silver", "Мөнгө"], ["jewelry", "Эдлэл"] ] as const).map(([mode, label]) => <button key={mode} type="button" className={listMode === mode ? "is-active" : undefined} onClick={() => setListMode(mode)}>{label}</button>)}</div><div className="intake-list-actions"><button type="button" className="secondary-button intake-refresh-button" aria-label="Шинэчлэх" title="Шинэчлэх" disabled={loading} onClick={refresh}><RefreshCw size={20} className={loading ? "is-spinning" : undefined} aria-hidden="true" /></button>
       <button type="button" className="primary-button" onClick={() => setEditing("gold")}>Алтан гулдмай бүртгэх</button>
       <button type="button" className="primary-button" onClick={() => setEditing("silver")}>Мөнгөн гулдмай бүртгэх</button><button type="button" className="primary-button" onClick={() => setJewelryRegistrationOpen(true)}>Алт, мөнгөн эдлэл</button></div></div>
     {error && <p role="alert" className="login-error">{error}</p>}
-    {loading ? <WorkspaceLoadingSkeleton /> : <div className="workspace-table-scroll"><table className="workspace-table intake-batch-table"><thead><tr><th><HeaderFilter column="registrationNo" text="Бүртгэл №" /></th><th><HeaderFilter column="customer" text="Харилцагч" /></th><th><HeaderFilter column="receivedAt" text="Огноо" /></th><th><HeaderFilter column="metal" text="Металл" /></th><th><HeaderFilter column="pieceCount" text="Гулдмай" /></th><th><HeaderFilter column="receivedBy" text="Бүртгэсэн ажилтан" /></th><th>Төлөв</th></tr></thead><tbody>{filtered.map((batch) => { const status = intakeWorkflowStatus(batch, sampleRecords); const opening = openingTrackingId === batch.id; return <tr key={batch.id} className="intake-batch-row is-detail" tabIndex={0} onClick={() => setViewing(batch)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setViewing(batch); } }} aria-label={`${batch.publicId} бүртгэлийн дэлгэрэнгүйг харах`}><td><strong className="registration-number">{batch.publicId}</strong></td><td>{batch.customerName}</td><td>{intakeDate(batch.receivedAt || batch.createdAt)}</td><td>{batch.metal === "gold" ? "Алт" : "Мөнгө"}</td><td>{batch.pieceCount}</td><td>{batch.receivedByName || "-"}</td><td><div className="intake-status-cell"><button type="button" className={`intake-workflow-status is-${status}`} disabled={opening} title="Ажлын явц харах" onClick={(event) => { event.stopPropagation(); void openTracking(batch.id); }} onKeyDown={(event) => event.stopPropagation()}>{opening ? <LoaderCircle className="is-spinning" size={18} aria-label="Ачаалж байна" /> : intakeWorkflowStatusLabel[status]}</button>{manager && <button type="button" className="secondary-button intake-edit-button" aria-label={`${batch.publicId} бүртгэл засах`} title="Бүртгэл засах" onClick={(event) => { event.stopPropagation(); setEditing(batch); }} onKeyDown={(event) => event.stopPropagation()}><Pencil size={17} aria-hidden="true" /></button>}</div></td></tr>; })}</tbody></table>{filtered.length === 0 && <p>Бүртгэл олдсонгүй.</p>}</div>}
+    {listMode === "jewelry" ? jewelryLoading ? <WorkspaceLoadingSkeleton /> : <div className="workspace-table-scroll"><table className="workspace-table jewelry-intake-table"><thead><tr><th>Эдлэлийн нэр</th><th>Харилцагч</th><th>Огноо</th><th>Металл</th><th>Халбагын төрөл</th><th>Делта / Титр</th><th>Жингийн ангилал</th><th>Тоо</th><th>Бүртгэсэн ажилтан</th></tr></thead><tbody>{jewelryRecords.map((record) => <tr key={record.id}><td>{record.itemName}</td><td>{record.customerName || "-"}</td><td>{intakeDate(record.receivedAt)}</td><td>{record.metal === "gold" ? "Алт" : "Мөнгө"}</td><td>{record.spoonType}</td><td>{record.qualityValue}</td><td>{record.weightBand}</td><td className="jewelry-piece-count">{record.pieceCount}</td><td>{record.receivedByName}</td></tr>)}</tbody></table>{jewelryRecords.length === 0 && <p>Эдлэлийн бүртгэл олдсонгүй.</p>}</div> : loading ? <WorkspaceLoadingSkeleton /> : <div className="workspace-table-scroll"><table className="workspace-table intake-batch-table"><thead><tr><th><HeaderFilter column="registrationNo" text="Бүртгэл №" /></th><th><HeaderFilter column="customer" text="Харилцагч" /></th><th><HeaderFilter column="receivedAt" text="Огноо" /></th><th><HeaderFilter column="metal" text="Металл" /></th><th><HeaderFilter column="pieceCount" text="Гулдмай" /></th><th><HeaderFilter column="receivedBy" text="Бүртгэсэн ажилтан" /></th><th>Төлөв</th></tr></thead><tbody>{filtered.map((batch) => { const status = intakeWorkflowStatus(batch, sampleRecords); const opening = openingTrackingId === batch.id; return <tr key={batch.id} className="intake-batch-row is-detail" tabIndex={0} onClick={() => setViewing(batch)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setViewing(batch); } }} aria-label={`${batch.publicId} бүртгэлийн дэлгэрэнгүйг харах`}><td><strong className="registration-number">{batch.publicId}</strong></td><td>{batch.customerName}</td><td>{intakeDate(batch.receivedAt || batch.createdAt)}</td><td>{batch.metal === "gold" ? "Алт" : "Мөнгө"}</td><td>{batch.pieceCount}</td><td>{batch.receivedByName || "-"}</td><td><div className="intake-status-cell"><button type="button" className={`intake-workflow-status is-${status}`} disabled={opening} title="Ажлын явц харах" onClick={(event) => { event.stopPropagation(); void openTracking(batch.id); }} onKeyDown={(event) => event.stopPropagation()}>{opening ? <LoaderCircle className="is-spinning" size={18} aria-label="Ачаалж байна" /> : intakeWorkflowStatusLabel[status]}</button>{manager && <button type="button" className="secondary-button intake-edit-button" aria-label={`${batch.publicId} бүртгэл засах`} title="Бүртгэл засах" onClick={(event) => { event.stopPropagation(); setEditing(batch); }} onKeyDown={(event) => event.stopPropagation()}><Pencil size={17} aria-hidden="true" /></button>}</div></td></tr>; })}</tbody></table>{filtered.length === 0 && <p>Бүртгэл олдсонгүй.</p>}</div>}
     {viewing && <IntakeDialog key={`view-${viewing.id}`} batch={viewing} customers={customers} manager={manager} editable={false} onClose={() => setViewing(null)} onSaved={() => undefined} />}
     {editing && <IntakeDialog key={typeof editing === "string" ? editing : editing.id} batch={typeof editing === "string" ? null : editing} initialMetal={typeof editing === "string" ? editing : editing.metal} customers={customers} manager={manager} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); void refresh(); }} />}
     {tracking && <AssignmentDialog batch={tracking.batch} samples={tracking.samples} manager={manager} onClose={() => setTracking(null)} onSaved={refreshTracking} />}
     {creatingCustomer && <CreateCustomerDialog onClose={() => setCreatingCustomer(false)} onCreated={(customer) => { setCustomers((current) => [...current, { ...customer, registrationNumber: customer.registrationNumberMasked, province: customer.province ?? null, district: customer.district ?? null, origin: null }]); setCreatingCustomer(false); }} />}
-    {jewelryRegistrationOpen && <WorkspaceDialog title="Алт, мөнгөн эдлэл бүртгэх" onClose={() => setJewelryRegistrationOpen(false)}><form className="workspace-form jewelry-registration-form" /></WorkspaceDialog>}
+    {jewelryRegistrationOpen && <JewelryRegistrationDialog customers={customers} onClose={() => setJewelryRegistrationOpen(false)} />}
     {dailyChemistScheduleOpen && <DailyChemistScheduleDialog onClose={() => setDailyChemistScheduleOpen(false)} />}
   </section>;
+}
+
+function JewelryRegistrationDialog({ customers, onClose }: { customers: CustomerOption[]; onClose(): void }) {
+  const [step, setStep] = useState<1 | 2>(1);
+  const [catalogue, setCatalogue] = useState<JewelryCatalogueItem[]>(fallbackJewelryCatalogue);
+  const [receivedAt, setReceivedAt] = useState(centerToday);
+  const [customerId, setCustomerId] = useState("");
+  const [catalogueName, setCatalogueName] = useState("");
+  const [weightBand, setWeightBand] = useState("");
+  const [count, setCount] = useState("1");
+  const [qualityValue, setQualityValue] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let active = true;
+    void api<{ data: JewelryCatalogueItem[] }>("/api/v1/bullion/jewelry-catalogue", { cache: "no-store" })
+      .then((result) => { if (active && result.data.length) setCatalogue(result.data); })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, []);
+  const item = catalogue.find((candidate) => candidate.name === catalogueName);
+  const metalLabel = item?.metal === "gold" ? "Алт" : item?.metal === "silver" ? "Мөнгө" : "";
+  const qualityLabel = item?.metal === "silver" ? "Титр" : "Делта";
+  const submittedCount = Number(count);
+  const ready = customerId && item && receivedAt && weightBand && Number.isInteger(submittedCount) && submittedCount > 0 && qualityValue.trim() !== "";
+  function continueToSummary(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!ready) { setError("Бүх шаардлагатай мэдээллийг оруулна уу."); return; }
+    setError(""); setStep(2);
+  }
+  async function save() {
+    if (!item || !ready) return;
+    setSaving(true); setError("");
+    const input: CreateJewelryIntakeInput = {
+      customerId, receivedAt, itemName: item.name, metal: item.metal, spoonType: item.spoonType,
+      qualityKind: item.metal === "gold" ? "delta" : "titer", qualityValue: Number(qualityValue), weightBand, pieceCount: submittedCount,
+    };
+    try {
+      await api("/api/v1/bullion/jewelry-intakes", { method: "POST", body: JSON.stringify(input) });
+      onClose();
+    } catch (error) { setError((error as Error).message); } finally { setSaving(false); }
+  }
+  return <WorkspaceDialog title="Алт, мөнгөн эдлэл бүртгэх" onClose={() => { if (!saving) onClose(); }}>
+    <div className="jewelry-stepper" aria-label="Бүртгэлийн алхам">
+      <span className={step === 1 ? "is-current" : "is-complete"}><b>1</b>Бүртгэл</span>
+      <span className={step === 2 ? "is-current" : ""}><b>2</b>Шинжилгээнд авсан мэдээлэл</span>
+    </div>
+    {step === 1 ? <form className="workspace-form jewelry-registration-form" onSubmit={continueToSummary}>
+      <div className="workspace-form-grid jewelry-form-grid">
+        <label>Огноо<CalendarDateInput name="jewelry-date" value={receivedAt} onChange={setReceivedAt} /></label>
+        <label>Харилцагч байгууллага<CustomerCombobox inputId="jewelry-customer" customers={customers} value={customerId} onChange={(customer) => setCustomerId(customer?.id ?? "")} /></label>
+        <label>Эдлэлийн нэр<select value={catalogueName} onChange={(event) => { const next = catalogue.find((candidate) => candidate.name === event.target.value); setCatalogueName(event.target.value); setQualityValue(next?.metal === "gold" ? "-0.03125" : next ? "5555.00" : ""); }} required><option value="">Сонгох</option>{catalogue.map((candidate) => <option key={candidate.name} value={candidate.name}>{candidate.name}</option>)}</select></label>
+        <label>Металл<input className="intake-auto-number" readOnly value={metalLabel} placeholder="Эдлэлийн нэр сонгоно уу" /></label>
+        <label>Халбагын төрөл<input className="intake-auto-number" readOnly value={item?.spoonType ?? ""} placeholder="Эдлэлийн нэр сонгоно уу" /></label>
+        <label>{qualityLabel}<input type="number" inputMode="decimal" step="any" value={qualityValue} disabled={!item} placeholder={item?.metal === "silver" ? "Титр оруулна уу" : "Делта оруулна уу"} onChange={(event) => setQualityValue(event.target.value)} required /></label>
+        <label>Жингийн ангилал<select value={weightBand} onChange={(event) => setWeightBand(event.target.value)} required><option value="">Сонгох</option>{jewelryWeightBands.map((band) => <option key={band} value={band}>{band}</option>)}</select></label>
+        <label>Тоо ширхэг<input type="number" min="1" step="1" value={count} onChange={(event) => setCount(event.target.value)} required /></label>
+      </div>
+      {error && <p className="login-error" role="alert">{error}</p>}
+      <div className="workspace-toolbar intake-form-actions"><button className="primary-button" type="submit">Дараах</button></div>
+    </form> : <section className="jewelry-summary-step">
+      <div className="jewelry-summary-copy"><strong>{item?.name}</strong><span>{metalLabel} · {weightBand} · {submittedCount} ширхэг</span></div>
+      <div className="workspace-table-scroll"><table className="workspace-table jewelry-summary-table"><thead><tr><th>Үзүүлэлт</th><th>Алт</th><th>Мөнгө</th></tr></thead><tbody>{jewelryWeightBands.map((band, index) => <tr key={band}><th scope="row">{index + 1}. {band}</th><td>{item?.metal === "gold" && weightBand === band ? submittedCount : 0}</td><td>{item?.metal === "silver" && weightBand === band ? submittedCount : 0}</td></tr>)}</tbody><tfoot><tr><th>Бүгд</th><td>{item?.metal === "gold" ? submittedCount : 0}</td><td>{item?.metal === "silver" ? submittedCount : 0}</td></tr></tfoot></table></div>
+      {error && <p className="login-error" role="alert">{error}</p>}
+      <div className="workspace-toolbar intake-form-actions"><button className="secondary-button" type="button" disabled={saving} onClick={() => setStep(1)}>Буцах</button><button className="primary-button" type="button" disabled={saving} onClick={() => void save()}>{saving ? "Хадгалж байна..." : "Хадгалах"}</button></div>
+    </section>}
+  </WorkspaceDialog>;
 }
 
 export function DailyChemistScheduleDialog({ onClose }: { onClose(): void }) {
